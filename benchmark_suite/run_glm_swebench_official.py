@@ -80,6 +80,84 @@ def call_model(base_url: str, api_key: str, model: str, prompt: str, timeout: in
     }
 
 
+def call_model_stream(
+    base_url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    timeout: int,
+    instance_id: str,
+) -> tuple[str, dict]:
+    payload = {
+        "model": model,
+        "temperature": 0,
+        "stream": True,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    request = urllib.request.Request(
+        url=f"{base_url.rstrip('/')}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    started = time.time()
+    first_chunk_at = None
+    chunk_count = 0
+    content_parts: list[str] = []
+    last_progress_chars = 0
+
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        while True:
+            raw_line = response.readline()
+            if not raw_line:
+                break
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or not line.startswith("data:"):
+                continue
+
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            choice = (payload.get("choices") or [{}])[0]
+            delta = choice.get("delta") or {}
+            text = delta.get("content") or ""
+            if text:
+                chunk_count += 1
+                if first_chunk_at is None:
+                    first_chunk_at = time.time()
+                    log(
+                        f"{instance_id}: first stream chunk after "
+                        f"{first_chunk_at - started:.2f}s"
+                    )
+                content_parts.append(text)
+                total_chars = sum(len(part) for part in content_parts)
+                if total_chars - last_progress_chars >= 800:
+                    last_progress_chars = total_chars
+                    log(
+                        f"{instance_id}: streaming progress "
+                        f"chars={total_chars} chunks={chunk_count}"
+                    )
+
+    latency_sec = time.time() - started
+    return "".join(content_parts), {
+        "usage": {},
+        "latency_sec": latency_sec,
+        "stream": True,
+        "ttft_sec": (first_chunk_at - started) if first_chunk_at is not None else None,
+        "chunk_count": chunk_count,
+    }
+
+
 def write_batch_csv(samples: list[dict], path: Path) -> None:
     fieldnames = list(samples[0].keys())
     with path.open("w", newline="") as handle:
@@ -105,6 +183,7 @@ def run_batch(
     max_retries: int,
     retry_backoff_sec: float,
     max_workers: int,
+    stream: bool,
 ) -> None:
     batch_dir = output_root / f"batch_{batch_index:02d}"
     batch_dir.mkdir(parents=True, exist_ok=True)
@@ -124,7 +203,17 @@ def run_batch(
         for attempt in range(1, max_retries + 1):
             log(f"{instance_id}: start attempt {attempt}/{max_retries}")
             try:
-                raw_text, metadata = call_model(base_url, api_key, model, prompt, timeout)
+                if stream:
+                    raw_text, metadata = call_model_stream(
+                        base_url=base_url,
+                        api_key=api_key,
+                        model=model,
+                        prompt=prompt,
+                        timeout=timeout,
+                        instance_id=instance_id,
+                    )
+                else:
+                    raw_text, metadata = call_model(base_url, api_key, model, prompt, timeout)
                 patch = extract_patch(raw_text)
                 attempts.append(
                     {
@@ -136,7 +225,8 @@ def run_batch(
                 )
                 log(
                     f"{instance_id}: success on attempt {attempt} "
-                    f"latency={metadata.get('latency_sec', 0.0):.2f}s diff_len={len(patch)}"
+                    f"latency={metadata.get('latency_sec', 0.0):.2f}s "
+                    f"diff_len={len(patch)}"
                 )
                 break
             except (TimeoutError, urllib.error.URLError) as exc:
@@ -226,6 +316,7 @@ def main() -> None:
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--retry-backoff-sec", type=float, default=5.0)
     parser.add_argument("--max-workers", type=int, default=3)
+    parser.add_argument("--stream", action="store_true")
     args = parser.parse_args()
 
     samples_path = Path(args.samples)
@@ -247,6 +338,7 @@ def main() -> None:
         "max_retries": args.max_retries,
         "retry_backoff_sec": args.retry_backoff_sec,
         "max_workers": args.max_workers,
+        "stream": args.stream,
         "prompt_template": PROMPT_TEMPLATE,
     }
     (output_root / "experiment_manifest.json").write_text(json.dumps(experiment_manifest, indent=2))
@@ -265,6 +357,7 @@ def main() -> None:
             max_retries=args.max_retries,
             retry_backoff_sec=args.retry_backoff_sec,
             max_workers=args.max_workers,
+            stream=args.stream,
         )
         log(f"batch_{batch_index:02d}: finished")
 
