@@ -1,24 +1,43 @@
 # Agent Benchmark Suite
 
-Agent Benchmark Suite is a pragmatic workspace for comparing agent runtimes and connecting them to real benchmarks.
+Agent Benchmark Suite is a local workspace for running real agent evaluations against official benchmark infrastructure.
 
-The repository now treats these as first-class official integrations:
+This repository supports two different use cases:
 
-- `SWE-Bench Pro`: official evaluator and dataset from ScaleAI
-- `WebArena-Verified`: official verified web benchmark from ServiceNow
-- `Toolathlon`: official multi-tool benchmark from HKUST NLP
+- generic JSONL task runs for adapter debugging
+- official benchmark workflows for `SWE-Bench Pro`, `WebArena-Verified`, and `Toolathlon`
 
-The generic JSONL runner is still included for local smoke tests and adapter debugging, but the primary direction is real benchmark integration instead of benchmark-style mock tasks.
+The important distinction is:
 
-## What This Repository Does
+- generic JSONL results in this repository are only local smoke tests
+- official benchmark scores must come from the upstream benchmark evaluator
 
-- Provides a unified adapter layer for `bare-llm`, `openclaw-cmd`, and `codex-cmd`
-- Exports real benchmark datasets from official sources
-- Clones official benchmark repositories into local workspaces
-- Prints benchmark-specific runbooks so the official evaluator is always the source of truth
-- Keeps lightweight reporting utilities for generic JSONL runs
+## Repository Scope
+
+This repository provides:
+
+- adapters for `bare-llm`, `codex-cmd`, and `openclaw-cmd`
+- commands to clone official benchmark repositories
+- dataset export helpers for official benchmark inputs
+- a reproducible `GLM-5` runner for `SWE-Bench Pro` patch generation
+- lightweight result reporting for local JSONL runs
+
+This repository does not replace the official evaluators.
+
+## Directory Layout
+
+- [benchmark_suite](/Users/liuyibo/Desktop/d/test/benchmark_suite): core package
+- [benchmark_suite/cli.py](/Users/liuyibo/Desktop/d/test/benchmark_suite/cli.py): command-line entrypoint
+- [benchmark_suite/official_benchmarks.py](/Users/liuyibo/Desktop/d/test/benchmark_suite/official_benchmarks.py): official repo and dataset helpers
+- [benchmark_suite/run_glm_swebench_official.py](/Users/liuyibo/Desktop/d/test/benchmark_suite/run_glm_swebench_official.py): fixed-prompt `GLM-5` runner for official `SWE-Bench Pro`
+- [fixtures](/Users/liuyibo/Desktop/d/test/fixtures): local smoke-test fixtures
+- [tests](/Users/liuyibo/Desktop/d/test/tests): unit tests for the local framework
 
 ## Install
+
+### Base environment
+
+Use this for local JSONL runs and CLI utilities:
 
 ```bash
 python3 -m venv .venv
@@ -26,13 +45,17 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-If you want to use Hugging Face dataset exports:
+If you want dataset export commands:
 
 ```bash
 pip install datasets
 ```
 
-If you want to run the official SWE-Bench Pro evaluator locally:
+### Official SWE-Bench Pro local evaluation environment
+
+The official local evaluator requires Docker access and a recent Python.
+
+Example on macOS:
 
 ```bash
 brew install docker colima python@3.11
@@ -42,11 +65,17 @@ source .venv311/bin/activate
 pip install swebench datasets docker
 ```
 
+If Docker runs through Colima, export the socket before official evaluation:
+
+```bash
+export DOCKER_HOST=unix:///Users/$USER/.colima/docker.sock
+```
+
 ## Generic Adapters
 
 ### `bare-llm`
 
-Calls an OpenAI-compatible Chat Completions endpoint directly. This is useful as a baseline, not as the main agent track.
+This is a direct OpenAI-compatible chat-completions baseline. It is useful as a weak baseline, not as a strong agent benchmark.
 
 Required environment variables:
 
@@ -54,17 +83,22 @@ Required environment variables:
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`
 
-### `openclaw-cmd`
-
-Runs an external OpenClaw-compatible command. The command must read a task JSON payload from `stdin` and return a result JSON object on `stdout`.
-
 ### `codex-cmd`
 
 Runs the local `codex exec` CLI in non-interactive mode.
 
+### `openclaw-cmd`
+
+Runs an external OpenClaw-compatible command. The command must:
+
+- read one task JSON object from `stdin`
+- return one result JSON object on `stdout`
+
 ## Generic CLI
 
-Run a generic JSONL task set:
+These commands are for local JSONL tasks only.
+
+Run:
 
 ```bash
 agent-benchmark run \
@@ -73,24 +107,30 @@ agent-benchmark run \
   --output runs/codex_results.jsonl
 ```
 
-Summarize one run:
+Report:
 
 ```bash
 agent-benchmark report --input runs/codex_results.jsonl
 ```
 
-Compare multiple runs:
+Compare:
 
 ```bash
 agent-benchmark compare \
-  --inputs runs/minimax_bare_llm_results.jsonl runs/codex_results.jsonl
+  --inputs runs/mock_results.jsonl runs/codex_results.jsonl
 ```
 
-## Real Benchmarks
+Validate a JSONL task file:
 
-### SWE-Bench Pro
+```bash
+agent-benchmark validate --tasks fixtures/sample_tasks.jsonl
+```
 
-Clone the official evaluator:
+## Official Benchmarks
+
+## SWE-Bench Pro
+
+### 1. Clone the official evaluator
 
 ```bash
 agent-benchmark clone-official \
@@ -98,34 +138,128 @@ agent-benchmark clone-official \
   --dest ../benchmarks/SWE-bench_Pro-os
 ```
 
-Export the real dataset:
+Official source:
+
+- repo: `https://github.com/scaleapi/SWE-bench_Pro-os`
+- dataset: `ScaleAI/SWE-bench_Pro`
+
+### 2. Export the official dataset
+
+Export a small subset:
 
 ```bash
 agent-benchmark export-swebench-pro \
-  --output data/swebench_pro_test.jsonl \
+  --output data/swebench_pro_test_10.jsonl \
   --limit 10
 ```
 
-Export gold patches for evaluator smoke tests:
+Export official gold patches for evaluator smoke tests:
 
 ```bash
 agent-benchmark export-swebench-pro-gold \
-  --output data/swebench_pro_gold.json \
+  --output data/swebench_pro_gold_10.json \
   --limit 10
 ```
 
-Print the official workflow:
+### 3. Read the official runbook
 
 ```bash
 agent-benchmark official-runbook --benchmark swebench-pro
 ```
 
-Official sources:
+### 4. Generate predictions
 
-- Repo: `https://github.com/scaleapi/SWE-bench_Pro-os`
-- Dataset: `ScaleAI/SWE-bench_Pro`
+This repository currently includes a fixed-protocol runner for `GLM-5`.
 
-### WebArena-Verified
+Example:
+
+```bash
+python benchmark_suite/run_glm_swebench_official.py \
+  --samples /path/to/swebench_samples.jsonl \
+  --manifest /path/to/instance_manifest.json \
+  --batches /path/to/batches.json \
+  --output-root /path/to/output_dir \
+  --base-url https://open.bigmodel.cn/api/coding/paas/v4 \
+  --api-key "$GLM_API_KEY" \
+  --model glm-5 \
+  --timeout 180 \
+  --max-retries 3 \
+  --retry-backoff-sec 5 \
+  --max-workers 1
+```
+
+Important protocol notes:
+
+- `--manifest` fixes the instance list
+- `--batches` fixes batch boundaries
+- `--max-workers 1` means strictly one active instance request at a time
+- retry is automatic only for timeout and transient network errors
+- raw model output is preserved
+- extracted patch is preserved
+- no manual patch repair is performed
+
+### 5. Run the official evaluator
+
+From the cloned `SWE-bench_Pro-os` repository:
+
+```bash
+export DOCKER_HOST=unix:///Users/$USER/.colima/docker.sock
+
+python swe_bench_pro_eval.py \
+  --raw_sample_path /path/to/batch_01/samples.csv \
+  --patch_path /path/to/batch_01/patches.json \
+  --output_dir /path/to/batch_01/eval_output \
+  --scripts_dir run_scripts \
+  --num_workers 3 \
+  --dockerhub_username jefzda \
+  --use_local_docker
+```
+
+### 6. How official scoring works
+
+For each instance, the official evaluator checks whether all required tests pass.
+
+That means:
+
+- if all required tests pass, the instance is `true`
+- if even one required test fails, the instance is `false`
+
+There is no partial credit for one instance.
+
+### 7. Output files produced by the `GLM-5` runner
+
+Each batch directory contains:
+
+- `samples.jsonl`: fixed official dataset rows used for generation
+- `samples.csv`: official evaluator input table for that batch
+- `patches.json`: generated patch payload consumed by the official evaluator
+- `<instance_id>.raw.txt`: raw model output
+- `<instance_id>.diff`: extracted git diff
+- `generation_summary.json`: generation metadata, attempts, and retry status
+
+The output root also contains:
+
+- `experiment_manifest.json`: experiment-level protocol metadata
+
+### 8. Reproducibility checklist
+
+If you want to cite results in a paper, record:
+
+- benchmark name and official repo URL
+- official repo commit
+- dataset name and split
+- instance manifest
+- batch definition
+- model name
+- base URL
+- timeout
+- retry count
+- worker count
+- raw outputs
+- extracted patches
+- official evaluator output directory
+
+## WebArena-Verified
 
 Clone the official repository:
 
@@ -159,12 +293,12 @@ agent-benchmark official-runbook --benchmark webarena-verified
 
 Official sources:
 
-- Repo: `https://github.com/ServiceNow/webarena-verified`
-- Package: `webarena-verified`
+- repo: `https://github.com/ServiceNow/webarena-verified`
+- package: `webarena-verified`
 - BrowserGym package: `browsergym-webarena-verified`
-- Dataset: `AmineHA/WebArena-Verified`
+- dataset: `AmineHA/WebArena-Verified`
 
-### Toolathlon
+## Toolathlon
 
 Clone the official repository:
 
@@ -182,12 +316,42 @@ agent-benchmark official-runbook --benchmark toolathlon
 
 Official source:
 
-- Repo: `https://github.com/hkust-nlp/Toolathlon`
+- repo: `https://github.com/hkust-nlp/Toolathlon`
 
-Toolathlon does not currently expose a lightweight dataset-only export flow like SWE-Bench Pro or WebArena-Verified. The intended workflow is to clone the repo, configure credentials, deploy the required application containers, and run the provided task scripts.
+Toolathlon is environment-heavy. The normal path is:
+
+- clone the official repo
+- configure the model endpoint and key
+- deploy the required application containers
+- run the official scripts from the upstream repository
+
+## Recommended Workflow
+
+For serious evaluation:
+
+1. Export a fixed official subset.
+2. Freeze the instance list in a manifest file.
+3. Freeze batching strategy.
+4. Generate raw outputs without manual intervention.
+5. Extract patches automatically.
+6. Run the upstream official evaluator.
+7. Archive raw outputs, extracted patches, and evaluator outputs.
+
+For quick local debugging:
+
+1. Use `fixtures/sample_tasks.jsonl`.
+2. Run `agent-benchmark run`.
+3. Use `agent-benchmark report` and `agent-benchmark compare`.
+
+## Current Limitations
+
+- this repository does not implement the official `WebArena-Verified` runtime
+- this repository does not replace official `Toolathlon` deployment scripts
+- `bare-llm` is intentionally weak and should not be interpreted as an agent scaffold
+- the local JSONL evaluator is not an official benchmark scorer
 
 ## Notes
 
-- The generic JSONL evaluator in this repository is intentionally simple and should not be confused with official benchmark scoring.
-- Official benchmark scoring should always come from the upstream benchmark repository or package.
-- `fixtures/sample_tasks.jsonl` remains in the repo only as a local adapter smoke test.
+- keep secrets in environment variables, not in files
+- do not commit local virtual environments
+- do not report generic JSONL smoke-test numbers as official benchmark results
