@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-benchmark-suite"
+version = "0.1.0"
+description = "Mixed benchmark harness for agent systems across SWE, Web, and tool-use tasks."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+agent-benchmark = "benchmark_suite.cli:main"
+
+[tool.setuptools]
+packages = ["benchmark_suite", "benchmark_suite.agent_adapters"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
