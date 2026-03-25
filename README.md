@@ -1,156 +1,193 @@
 # Agent Benchmark Suite
 
-一个面向 `agent/harness` 的混合 benchmark 框架，覆盖三类任务：
+Agent Benchmark Suite is a pragmatic workspace for comparing agent runtimes and connecting them to real benchmarks.
 
-- `SWE-Bench Pro` 风格的代码仓库任务
-- `WebArena-Verified` 风格的网页操作任务
-- `Toolathlon` 风格的多工具任务
+The repository now treats these as first-class official integrations:
 
-这个仓库默认比较的是 `agent runtime`，不是裸模型。底层模型通过 OpenAI-compatible API 统一接入；主入口是 agent adapter。
+- `SWE-Bench Pro`: official evaluator and dataset from ScaleAI
+- `WebArena-Verified`: official verified web benchmark from ServiceNow
+- `Toolathlon`: official multi-tool benchmark from HKUST NLP
 
-## Features
+The generic JSONL runner is still included for local smoke tests and adapter debugging, but the primary direction is real benchmark integration instead of benchmark-style mock tasks.
 
-- 统一 task/result schema
-- 可扩展 agent adapter 接口
-- `bare-llm` baseline
-- `openclaw-cmd` 命令行式 agent adapter
-- `mock` agent 便于本地演示和测试
-- JSONL 任务输入、JSONL 结果输出
-- 汇总报表与分榜
+## What This Repository Does
 
-## Quick Start
+- Provides a unified adapter layer for `bare-llm`, `openclaw-cmd`, and `codex-cmd`
+- Exports real benchmark datasets from official sources
+- Clones official benchmark repositories into local workspaces
+- Prints benchmark-specific runbooks so the official evaluator is always the source of truth
+- Keeps lightweight reporting utilities for generic JSONL runs
+
+## Install
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-pytest
 ```
 
-运行内置 mock agent：
+If you want to use Hugging Face dataset exports:
 
 ```bash
-agent-benchmark run \
-  --tasks fixtures/sample_tasks.jsonl \
-  --agent mock \
-  --output runs/mock_results.jsonl
+pip install datasets
 ```
 
-生成汇总：
+If you want to run the official SWE-Bench Pro evaluator locally:
 
 ```bash
-agent-benchmark report \
-  --input runs/mock_results.jsonl
+brew install docker colima python@3.11
+colima start
+python3.11 -m venv .venv311
+source .venv311/bin/activate
+pip install swebench datasets docker
 ```
 
-对比多个 agent 结果：
+## Generic Adapters
 
-```bash
-agent-benchmark compare \
-  --inputs runs/mock_results.jsonl runs/openclaw_results.jsonl
-```
+### `bare-llm`
 
-## Agent Adapters
+Calls an OpenAI-compatible Chat Completions endpoint directly. This is useful as a baseline, not as the main agent track.
 
-### 1. bare-llm
-
-直接调用 OpenAI-compatible Chat Completions API。适合做 baseline，不适合作为主榜执行入口。
-
-必填环境变量：
+Required environment variables:
 
 - `OPENAI_BASE_URL`
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL`
 
-### 2. openclaw-cmd
+### `openclaw-cmd`
 
-通过命令行程序调用 agent。该 adapter 假设 agent 能从 stdin 读取任务 JSON，并向 stdout 输出结果 JSON。
+Runs an external OpenClaw-compatible command. The command must read a task JSON payload from `stdin` and return a result JSON object on `stdout`.
 
-请求格式：
+### `codex-cmd`
 
-```json
-{
-  "task": {
-    "task_id": "swe-001",
-    "benchmark_family": "swe",
-    "prompt": "Fix the failing test",
-    "metadata": {},
-    "expected": {"must_contain": ["patch", "tests passed"]},
-    "budget": {"max_steps": 30, "max_runtime_sec": 900}
-  }
-}
-```
+Runs the local `codex exec` CLI in non-interactive mode.
 
-响应格式：
+## Generic CLI
 
-```json
-{
-  "final_output": "Applied patch and verified tests passed",
-  "steps": 12,
-  "tool_calls": 18,
-  "tokens_in": 4500,
-  "tokens_out": 900,
-  "cost_usd": 0.11,
-  "trace": ["opened repo", "edited file", "ran tests"],
-  "metadata": {"agent_version": "local-dev"}
-}
-```
-
-## CLI
-
-### Run benchmark
+Run a generic JSONL task set:
 
 ```bash
 agent-benchmark run \
   --tasks fixtures/sample_tasks.jsonl \
-  --agent openclaw-cmd \
-  --agent-command "/path/to/openclaw_runner" \
-  --output runs/openclaw_results.jsonl
+  --agent codex-cmd \
+  --output runs/codex_results.jsonl
 ```
 
-### Report
+Summarize one run:
 
 ```bash
-agent-benchmark report \
-  --input runs/openclaw_results.jsonl \
-  --format table
+agent-benchmark report --input runs/codex_results.jsonl
 ```
 
-### Compare
+Compare multiple runs:
 
 ```bash
 agent-benchmark compare \
-  --inputs runs/mock_results.jsonl runs/openclaw_results.jsonl \
-  --format table
+  --inputs runs/minimax_bare_llm_results.jsonl runs/codex_results.jsonl
 ```
 
-### Validate task file
+## Real Benchmarks
+
+### SWE-Bench Pro
+
+Clone the official evaluator:
 
 ```bash
-agent-benchmark validate --tasks fixtures/sample_tasks.jsonl
+agent-benchmark clone-official \
+  --benchmark swebench-pro \
+  --dest ../benchmarks/SWE-bench_Pro-os
 ```
 
-## Task Schema
+Export the real dataset:
 
-每条任务为一行 JSON：
-
-```json
-{
-  "task_id": "tool-001",
-  "benchmark_family": "tool",
-  "title": "Summarize an error log",
-  "prompt": "Read the tool output and produce a concise diagnosis.",
-  "metadata": {"difficulty": "easy"},
-  "expected": {"must_contain": ["diagnosis"]},
-  "budget": {"max_steps": 8, "max_runtime_sec": 120}
-}
+```bash
+agent-benchmark export-swebench-pro \
+  --output data/swebench_pro_test.jsonl \
+  --limit 10
 ```
 
-`expected.must_contain` 是内置 evaluator 的最小验证规则。真正接入官方 benchmark 时，应替换为该 benchmark 的官方 verifier。
+Export gold patches for evaluator smoke tests:
 
-## Roadmap
+```bash
+agent-benchmark export-swebench-pro-gold \
+  --output data/swebench_pro_gold.json \
+  --limit 10
+```
 
-- 接入官方 `SWE-Bench Pro` verifier
-- 接入 `WebArena-Verified` browser harness
-- 接入 `Toolathlon` task pack
-- 增加 HTML/Markdown 报告输出
+Print the official workflow:
+
+```bash
+agent-benchmark official-runbook --benchmark swebench-pro
+```
+
+Official sources:
+
+- Repo: `https://github.com/scaleapi/SWE-bench_Pro-os`
+- Dataset: `ScaleAI/SWE-bench_Pro`
+
+### WebArena-Verified
+
+Clone the official repository:
+
+```bash
+agent-benchmark clone-official \
+  --benchmark webarena-verified \
+  --dest ../benchmarks/webarena-verified
+```
+
+Export the real dataset:
+
+```bash
+agent-benchmark export-webarena-verified \
+  --output data/webarena_verified_full.jsonl \
+  --split full
+```
+
+Export the hard subset:
+
+```bash
+agent-benchmark export-webarena-verified \
+  --output data/webarena_verified_hard.jsonl \
+  --split hard
+```
+
+Print the official workflow:
+
+```bash
+agent-benchmark official-runbook --benchmark webarena-verified
+```
+
+Official sources:
+
+- Repo: `https://github.com/ServiceNow/webarena-verified`
+- Package: `webarena-verified`
+- BrowserGym package: `browsergym-webarena-verified`
+- Dataset: `AmineHA/WebArena-Verified`
+
+### Toolathlon
+
+Clone the official repository:
+
+```bash
+agent-benchmark clone-official \
+  --benchmark toolathlon \
+  --dest ../benchmarks/Toolathlon
+```
+
+Print the official workflow:
+
+```bash
+agent-benchmark official-runbook --benchmark toolathlon
+```
+
+Official source:
+
+- Repo: `https://github.com/hkust-nlp/Toolathlon`
+
+Toolathlon does not currently expose a lightweight dataset-only export flow like SWE-Bench Pro or WebArena-Verified. The intended workflow is to clone the repo, configure credentials, deploy the required application containers, and run the provided task scripts.
+
+## Notes
+
+- The generic JSONL evaluator in this repository is intentionally simple and should not be confused with official benchmark scoring.
+- Official benchmark scoring should always come from the upstream benchmark repository or package.
+- `fixtures/sample_tasks.jsonl` remains in the repo only as a local adapter smoke test.

@@ -1,3 +1,3 @@
 """Agent benchmark suite package."""
 
-__all__ = ["models", "runner", "reporting"]
+__all__ = ["models", "official_benchmarks", "reporting", "runner"]

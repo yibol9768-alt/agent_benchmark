@@ -54,13 +54,15 @@ class TaskSpec:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TaskSpec":
+        metadata = data.get("metadata") or {}
+        expected = data.get("expected") or {}
         return cls(
             task_id=str(data["task_id"]),
             benchmark_family=BenchmarkFamily(data["benchmark_family"]),
             title=str(data.get("title") or data["task_id"]),
             prompt=str(data["prompt"]),
-            metadata=dict(data.get("metadata", {})),
-            expected=dict(data.get("expected", {})),
+            metadata=dict(metadata),
+            expected=dict(expected),
             budget=Budget.from_dict(data.get("budget")),
         )
 
@@ -83,6 +85,8 @@ class AgentResponse:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AgentResponse":
+        trace = data.get("trace") or []
+        metadata = data.get("metadata") or {}
         return cls(
             final_output=str(data.get("final_output", "")),
             steps=int(data.get("steps", 0)),
@@ -90,8 +94,8 @@ class AgentResponse:
             tokens_in=int(data.get("tokens_in", 0)),
             tokens_out=int(data.get("tokens_out", 0)),
             cost_usd=float(data.get("cost_usd", 0.0)),
-            trace=[str(item) for item in data.get("trace", [])],
-            metadata=dict(data.get("metadata", {})),
+            trace=[str(item) for item in trace],
+            metadata=dict(metadata),
         )
 
     def to_dict(self) -> dict[str, Any]:
