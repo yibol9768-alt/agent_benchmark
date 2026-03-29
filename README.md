@@ -87,7 +87,7 @@ LIMIT=20 MAX_WORKERS=4 TIMEOUT_SEC=1200 bash scripts/run_opencode_swebench_pro_f
 
 #### 官方评测
 
-需要 SWE-Bench Pro 官方评测仓库（问学长要路径）。
+需要 SWE-Bench Pro 官方评测仓库（`SWE-bench_Pro-os`）。
 
 ```bash
 # macOS 需要设 Docker 环境变量
