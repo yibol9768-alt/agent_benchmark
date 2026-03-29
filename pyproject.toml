@@ -1,20 +1,21 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "agent-benchmark-suite"
+name = "agent-benchmark"
 version = "0.1.0"
-description = "Mixed benchmark harness for agent systems across SWE, Web, and tool-use tasks."
-readme = "README.md"
-requires-python = ">=3.9"
-dependencies = []
+description = "Unified agent benchmark harness for GLM evaluation"
+requires-python = ">=3.13"
+dependencies = [
+    "datasets>=3.0",
+    "openai>=1.0",
+    "huggingface-hub>=0.20",
+    "requests",
+]
 
-[project.scripts]
-agent-benchmark = "benchmark_suite.cli:main"
+[project.optional-dependencies]
+webarena = [
+    "webarena-verified",
+]
 
-[tool.setuptools]
-packages = ["benchmark_suite", "benchmark_suite.agent_adapters"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+[tool.uv]
+dev-dependencies = [
+    "pytest",
+]

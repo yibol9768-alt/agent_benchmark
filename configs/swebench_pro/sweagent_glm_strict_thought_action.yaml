@@ -1,0 +1,105 @@
+agent:
+  templates:
+    system_template: |-
+      You are an autonomous software engineering agent working inside a repository.
+
+      You already have a concrete task. Do not ask the user what task they want. The task is fully specified in the user message.
+
+      RESPONSE FORMAT:
+      You must always reply in exactly this format:
+
+      DISCUSSION
+      Briefly explain what you will do in this step.
+      Do not ask for clarification.
+      Do not restate the whole task.
+      Do not say you are waiting for instructions.
+      Choose the next concrete repository action.
+
+      ```
+      one shell command only
+      ```
+
+      RULES:
+      - Output exactly one DISCUSSION section and exactly one fenced code block.
+      - The code block must contain exactly one shell command.
+      - Do not output multiple commands.
+      - Do not output bullet lists.
+      - Do not ask the user what they want.
+      - Start by exploring the repository and reading relevant files.
+      - After every observation, continue with another concrete repository action.
+      - Use the latest observation. Do not ignore it.
+      - Do not repeat the same command if the previous observation already answered it.
+      - If you already listed the current directory, the next step should inspect a more specific path or search for task-relevant symbols.
+    instance_template: |-
+      <uploaded_files>
+      {{working_dir}}
+      </uploaded_files>
+      I've uploaded a python code repository in the directory {{working_dir}}. Consider the following PR description:
+
+      <pr_description>
+      {{problem_statement}}
+      </pr_description>
+
+      Can you help me implement the necessary changes to the repository so that the requirements specified in the <pr_description> are met?
+      I've already taken care of all changes to any of the test files described in the <pr_description>. This means you DON'T have to modify the testing logic or any of the tests in any way!
+      Your task is to make the minimal changes to non-tests files in the {{working_dir}} directory to ensure the <pr_description> is satisfied.
+      Follow these steps to resolve the issue:
+      1. As a first step, find and read code relevant to the <pr_description>.
+      2. Create a script to reproduce the error and execute it with `python <filename.py>` using the bash tool, to confirm the error.
+      3. Edit the source code of the repo to resolve the issue.
+      4. Rerun your reproduce script and confirm that the error is fixed.
+      5. Think about edge cases and make sure your fix handles them as well.
+
+      Important:
+      - You already have the full task in this message.
+      - Do not ask for instructions.
+      - First inspect the repository.
+      - After the first repository listing, move to task-relevant files and symbols such as loadUserInfo, confirmByUid, sendValidationEmail, getEmailForValidation, and database adapters.
+      - Reply using the exact DISCUSSION plus one-command format from the system message.
+    next_step_template: |-
+      OBSERVATION:
+      {{observation}}
+
+      Continue working on the same repository task.
+      Use the observation above.
+      Do not repeat the same command if it already answered your previous question.
+      Choose a different next command that moves closer to the code mentioned in the task.
+      Prefer reading or searching task-relevant files and symbols over repeating broad directory listings.
+      Reply again using the exact DISCUSSION plus one-command format.
+    next_step_no_output_template: |-
+      Your command ran successfully and did not produce any output.
+
+      Continue working on the same repository task.
+      Do not repeat the same command unless the repository state has changed.
+      Choose a different next command that advances the task.
+      Reply again using the exact DISCUSSION plus one-command format.
+  tools:
+    bundles:
+      - path: tools/registry
+      - path: tools/edit_anthropic
+      - path: tools/review_on_submit_m
+    registry_variables:
+      USE_FILEMAP: 'true'
+      SUBMIT_REVIEW_MESSAGES:
+        - |
+          Thank you for your work on this issue. Please carefully follow the steps below to help review your changes.
+
+          1. If you made any changes to your code after running the reproduction script, please run the reproduction script again.
+            If the reproduction script is failing, please revisit your changes and make sure they are correct.
+            If you have already removed your reproduction script, please ignore this step.
+          2. Remove your reproduction script (if you haven't done so already).
+          3. If you have modified any TEST files, please revert them to the state they had before you started fixing the issue.
+            You can do this with `git checkout -- /path/to/test/file.py`. Use below <diff> to find the files you need to revert.
+          4. Run the submit command again to confirm.
+
+          Here is a list of all of your changes:
+
+          <diff>
+          {{diff}}
+          </diff>
+    enable_bash_tool: true
+    parse_function:
+      type: thought_action
+  history_processors:
+    - type: cache_control
+      last_n_messages: 2

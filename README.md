@@ -1,357 +1,341 @@
-# Agent Benchmark Suite
+# Agent Benchmark - OpenCode + GLM-5 评测框架
 
-Agent Benchmark Suite is a local workspace for running real agent evaluations against official benchmark infrastructure.
+本仓库用于评测 **opencode + glm-5** 在多个主流 Agent Benchmark 上的表现。
 
-This repository supports two different use cases:
+支持三条评测线：
 
-- generic JSONL task runs for adapter debugging
-- official benchmark workflows for `SWE-Bench Pro`, `WebArena-Verified`, and `Toolathlon`
+1. **SWE-Bench Pro** — 731 道真实软件工程 bug 修复任务（JS/Python/Go/TS）
+2. **WebArena-Verified** — 812 道 web 浏览交互任务
+3. **Toolathlon** — 108 道多步骤工具调用任务（32 个真实应用）
 
-The important distinction is:
+---
 
-- generic JSONL results in this repository are only local smoke tests
-- official benchmark scores must come from the upstream benchmark evaluator
+## 目录结构
 
-## Repository Scope
-
-This repository provides:
-
-- adapters for `bare-llm`, `codex-cmd`, and `openclaw-cmd`
-- commands to clone official benchmark repositories
-- dataset export helpers for official benchmark inputs
-- a reproducible `GLM-5` runner for `SWE-Bench Pro` patch generation
-- lightweight result reporting for local JSONL runs
-
-This repository does not replace the official evaluators.
-
-## Directory Layout
-
-- [benchmark_suite](/Users/liuyibo/Desktop/d/test/benchmark_suite): core package
-- [benchmark_suite/cli.py](/Users/liuyibo/Desktop/d/test/benchmark_suite/cli.py): command-line entrypoint
-- [benchmark_suite/official_benchmarks.py](/Users/liuyibo/Desktop/d/test/benchmark_suite/official_benchmarks.py): official repo and dataset helpers
-- [benchmark_suite/run_glm_swebench_official.py](/Users/liuyibo/Desktop/d/test/benchmark_suite/run_glm_swebench_official.py): fixed-prompt `GLM-5` runner for official `SWE-Bench Pro`
-- [fixtures](/Users/liuyibo/Desktop/d/test/fixtures): local smoke-test fixtures
-- [tests](/Users/liuyibo/Desktop/d/test/tests): unit tests for the local framework
-
-## Install
-
-### Base environment
-
-Use this for local JSONL runs and CLI utilities:
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+```
+agent_benchmark/
+├── benchmark_suite/              # 核心评测代码
+│   ├── run_opencode_swebench.py      # SWE-Bench Pro patch 生成器
+│   ├── run_openhands_swebench_pro.py # OpenHands 方案（备选）
+│   ├── run_webarena_verified.py      # WebArena-Verified 评测
+│   ├── run_toolathlon.py             # Toolathlon 评测
+│   └── evaluate_swebench_pro.py      # SWE-Bench Pro 自定义评测脚本
+├── scripts/                      # 一键运行脚本
+│   ├── run_opencode_swebench_pro_smoke.sh   # SWE-Bench 单题测试
+│   ├── run_opencode_swebench_pro_full.sh    # SWE-Bench 全量跑
+│   ├── run_webarena_verified_smoke.sh       # WebArena smoke test
+│   ├── run_toolathlon_smoke.sh              # Toolathlon smoke test
+│   ├── setup_webarena.sh                    # WebArena 环境安装
+│   ├── setup_toolathlon.sh                  # Toolathlon 环境安装
+│   └── ...
+├── configs/                      # 配置文件
+│   ├── webarena/env_urls.json        # WebArena web 环境地址
+│   └── swebench_pro/                 # SWE-agent 配置
+├── vendor/                       # 第三方依赖（git clone）
+├── dumps/                        # 运行结果输出目录
+└── pyproject.toml                # Python 依赖管理（uv）
 ```
 
-If you want dataset export commands:
+---
+
+## 前置要求
+
+- **Python 3.13+**
+- **uv**（Python 包管理器）：`curl -LsSf https://astral.sh/uv/install.sh | sh`
+- **opencode**（代码 Agent CLI）：`npm install -g opencode-ai`
+- **Docker**（评测需要）：macOS 用 colima，Linux 直接装 docker
+- **Git**
+
+---
+
+## 快速开始
+
+### 1. 克隆仓库并安装依赖
 
 ```bash
-pip install datasets
+git clone https://github.com/yibol9768-alt/agent_benchmark.git
+cd agent_benchmark
+uv sync
 ```
 
-### Official SWE-Bench Pro local evaluation environment
-
-The official local evaluator requires Docker access and a recent Python.
-
-Example on macOS:
+### 2. 配置环境变量
 
 ```bash
-brew install docker colima python@3.11
-colima start
-python3.11 -m venv .venv311
-source .venv311/bin/activate
-pip install swebench datasets docker
+export GLM_API_KEY="你的API Key"
+export GLM_BASE_URL="http://35.220.164.252:3888/v1/"
+export GLM_MODEL="glm-5"
 ```
 
-If Docker runs through Colima, export the socket before official evaluation:
+API 使用 OpenAI 兼容格式，支持 `glm-5` 和 `MiniMax-M2.7` 模型。
+
+### 3. 验证 API 连通性
 
 ```bash
-export DOCKER_HOST=unix:///Users/$USER/.colima/docker.sock
+.venv/bin/python -c "
+from openai import OpenAI
+client = OpenAI(base_url='$GLM_BASE_URL', api_key='$GLM_API_KEY')
+r = client.chat.completions.create(model='glm-5', messages=[{'role':'user','content':'hello'}], max_tokens=10)
+print('API OK:', r.choices[0].message.content)
+"
 ```
 
-## Generic Adapters
+---
 
-### `bare-llm`
+## SWE-Bench Pro 评测
 
-This is a direct OpenAI-compatible chat-completions baseline. It is useful as a weak baseline, not as a strong agent benchmark.
+### 数据集
 
-Required environment variables:
+- HuggingFace: `ScaleAI/SWE-bench_Pro`
+- 731 道题，覆盖 11 个开源仓库
+- 语言分布：Go 280 / Python 266 / JS 165 / TS 20
 
-- `OPENAI_BASE_URL`
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
+### 评测流程
 
-### `codex-cmd`
+整个流程分两步：**生成 patch** 和 **跑测试评分**。
 
-Runs the local `codex exec` CLI in non-interactive mode.
+#### 第一步：生成 patch
 
-### `openclaw-cmd`
-
-Runs an external OpenClaw-compatible command. The command must:
-
-- read one task JSON object from `stdin`
-- return one result JSON object on `stdout`
-
-## Generic CLI
-
-These commands are for local JSONL tasks only.
-
-Run:
+opencode 调用 glm-5 分析代码、定位 bug、自动修改文件，产出 git diff 格式的 patch。
 
 ```bash
-agent-benchmark run \
-  --tasks fixtures/sample_tasks.jsonl \
-  --agent codex-cmd \
-  --output runs/codex_results.jsonl
+# 先跑单题 smoke test，确认环境没问题
+bash scripts/run_opencode_swebench_pro_smoke.sh
+
+# 跑 N 题试水（可调 LIMIT 和并发数）
+LIMIT=20 MAX_WORKERS=4 bash scripts/run_opencode_swebench_pro_full.sh
+
+# 全量跑 731 题（默认 8 并发，每题最多 900s）
+bash scripts/run_opencode_swebench_pro_full.sh
 ```
 
-Report:
-
-```bash
-agent-benchmark report --input runs/codex_results.jsonl
+输出在 `dumps/opencode_swebench_pro_full/`，每道题一个目录：
+```
+instance_<id>/
+├── summary.json          # 运行摘要（耗时、exit code、diff 大小）
+├── patch.diff            # glm-5 生成的 patch
+├── prompt.txt            # 给模型的 prompt
+├── opencode_stdout.txt   # opencode 运行日志
+└── opencode_stderr.txt   # opencode 错误日志
 ```
 
-Compare:
+跑完会自动生成 `patches_for_eval.json`（标准格式）和 `results_summary.json`（汇总统计）。
+
+#### 第二步：官方评测
+
+需要 SWE-Bench Pro 官方评测仓库（找学长要或联系负责人获取路径）。
 
 ```bash
-agent-benchmark compare \
-  --inputs runs/mock_results.jsonl runs/codex_results.jsonl
-```
+# macOS colima 用户需要先设 DOCKER_HOST
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 
-Validate a JSONL task file:
+# 启动 Docker
+colima start   # macOS
+# Linux 不需要这步
 
-```bash
-agent-benchmark validate --tasks fixtures/sample_tasks.jsonl
-```
+# 生成评测用的数据集文件
+.venv/bin/python -c "
+from datasets import load_dataset
+import json
+ds = load_dataset('ScaleAI/SWE-bench_Pro', split='test')
+with open('dumps/opencode_swebench_pro_full/raw_samples.jsonl', 'w') as f:
+    for row in ds:
+        row = dict(row)
+        for k, v in row.items():
+            if isinstance(v, list):
+                row[k] = json.dumps(v)
+        f.write(json.dumps(row, ensure_ascii=False) + '\n')
+print('Done')
+"
 
-## Official Benchmarks
-
-## SWE-Bench Pro
-
-### 1. Clone the official evaluator
-
-```bash
-agent-benchmark clone-official \
-  --benchmark swebench-pro \
-  --dest ../benchmarks/SWE-bench_Pro-os
-```
-
-Official source:
-
-- repo: `https://github.com/scaleapi/SWE-bench_Pro-os`
-- dataset: `ScaleAI/SWE-bench_Pro`
-
-### 2. Export the official dataset
-
-Export a small subset:
-
-```bash
-agent-benchmark export-swebench-pro \
-  --output data/swebench_pro_test_10.jsonl \
-  --limit 10
-```
-
-Export official gold patches for evaluator smoke tests:
-
-```bash
-agent-benchmark export-swebench-pro-gold \
-  --output data/swebench_pro_gold_10.json \
-  --limit 10
-```
-
-### 3. Read the official runbook
-
-```bash
-agent-benchmark official-runbook --benchmark swebench-pro
-```
-
-### 4. Generate predictions
-
-This repository currently includes a fixed-protocol runner for `GLM-5`.
-
-Example:
-
-```bash
-python benchmark_suite/run_glm_swebench_official.py \
-  --samples /path/to/swebench_samples.jsonl \
-  --manifest /path/to/instance_manifest.json \
-  --batches /path/to/batches.json \
-  --output-root /path/to/output_dir \
-  --base-url https://open.bigmodel.cn/api/coding/paas/v4 \
-  --api-key "$GLM_API_KEY" \
-  --model glm-5 \
-  --timeout 180 \
-  --max-retries 3 \
-  --retry-backoff-sec 5 \
-  --max-workers 1
-```
-
-Important protocol notes:
-
-- `--manifest` fixes the instance list
-- `--batches` fixes batch boundaries
-- `--max-workers 1` means strictly one active instance request at a time
-- retry is automatic only for timeout and transient network errors
-- raw model output is preserved
-- extracted patch is preserved
-- no manual patch repair is performed
-
-### 5. Run the official evaluator
-
-From the cloned `SWE-bench_Pro-os` repository:
-
-```bash
-export DOCKER_HOST=unix:///Users/$USER/.colima/docker.sock
-
+# 用官方脚本评测
+cd /path/to/SWE-bench_Pro-os   # 官方评测仓库路径
+source SWE-agent/.venv/bin/activate
 python swe_bench_pro_eval.py \
-  --raw_sample_path /path/to/batch_01/samples.csv \
-  --patch_path /path/to/batch_01/patches.json \
-  --output_dir /path/to/batch_01/eval_output \
-  --scripts_dir run_scripts \
-  --num_workers 3 \
-  --dockerhub_username jefzda \
-  --use_local_docker
+  --raw_sample_path="<agent_benchmark>/dumps/opencode_swebench_pro_full/raw_samples.jsonl" \
+  --patch_path="<agent_benchmark>/dumps/opencode_swebench_pro_full/patches_for_eval.json" \
+  --output_dir="<agent_benchmark>/dumps/opencode_swebench_pro_full/eval_output" \
+  --scripts_dir=run_scripts \
+  --num_workers=4 \
+  --dockerhub_username=jefzda \
+  --use_local_docker \
+  --docker_platform=linux/amd64
 ```
 
-### 6. How official scoring works
+评测结果会输出 `Overall accuracy: X.XX`，这就是最终成绩。
 
-For each instance, the official evaluator checks whether all required tests pass.
+### 已验证的结果
 
-That means:
+在本地 2 道题测试中：
+- **NodeBB** (JS, 300 个测试): PASS
+- **qutebrowser** (Python, 56 个测试): PASS
+- **Accuracy: 100% (2/2)**
 
-- if all required tests pass, the instance is `true`
-- if even one required test fails, the instance is `false`
+注意：Go 语言的 repo 在 arm64 Mac (QEMU 模拟) 上可能有环境兼容性问题，建议用 x86 Linux 机器跑全量评测。
 
-There is no partial credit for one instance.
+---
 
-### 7. Output files produced by the `GLM-5` runner
+## WebArena-Verified 评测
 
-Each batch directory contains:
+### 数据集
 
-- `samples.jsonl`: fixed official dataset rows used for generation
-- `samples.csv`: official evaluator input table for that batch
-- `patches.json`: generated patch payload consumed by the official evaluator
-- `<instance_id>.raw.txt`: raw model output
-- `<instance_id>.diff`: extracted git diff
-- `generation_summary.json`: generation metadata, attempts, and retry status
+- HuggingFace: `AmineHA/WebArena-Verified`
+- 812 道 web 浏览交互任务
+- 覆盖：GitLab、购物站、Reddit、Wikipedia、地图等网站
 
-The output root also contains:
-
-- `experiment_manifest.json`: experiment-level protocol metadata
-
-### 8. Reproducibility checklist
-
-If you want to cite results in a paper, record:
-
-- benchmark name and official repo URL
-- official repo commit
-- dataset name and split
-- instance manifest
-- batch definition
-- model name
-- base URL
-- timeout
-- retry count
-- worker count
-- raw outputs
-- extracted patches
-- official evaluator output directory
-
-## WebArena-Verified
-
-Clone the official repository:
+### 运行
 
 ```bash
-agent-benchmark clone-official \
-  --benchmark webarena-verified \
-  --dest ../benchmarks/webarena-verified
+# 安装（克隆官方 repo）
+bash scripts/setup_webarena.sh
+
+# 跑 smoke test（默认 3 题）
+bash scripts/run_webarena_verified_smoke.sh
+
+# 自定义参数
+LIMIT=10 bash scripts/run_webarena_verified_smoke.sh \
+  dumps/webarena_test \
+  glm-5
 ```
 
-Export the real dataset:
+### 说明
+
+- 当前 runner 通过 OpenAI API 调用 glm-5，模型返回结构化 JSON 响应
+- 完整的交互式评测需要部署 Web 环境（GitLab、购物站等 Docker 服务），参见 `vendor/webarena-verified/` 的文档
+- 环境 URL 配置在 `configs/webarena/env_urls.json`
+
+---
+
+## Toolathlon 评测
+
+### 数据集
+
+- HuggingFace: `hkust-nlp/Toolathlon-Trajectories`
+- 108 道多步骤工具调用任务
+- 覆盖 32 个真实应用（Google Calendar、Notion、Slack、Kubernetes 等）
+
+### 运行
 
 ```bash
-agent-benchmark export-webarena-verified \
-  --output data/webarena_verified_full.jsonl \
-  --split full
+# 安装（克隆官方 repo）
+bash scripts/setup_toolathlon.sh
+
+# 跑 smoke test（默认 3 题）
+bash scripts/run_toolathlon_smoke.sh
+
+# 使用官方 eval_client（需要 Docker 环境）
+.venv/bin/python benchmark_suite/run_toolathlon.py \
+  --output-root dumps/toolathlon_official \
+  --model glm-5 \
+  --base-url "$GLM_BASE_URL" \
+  --api-key "$GLM_API_KEY" \
+  --use-official-client \
+  --server-host 47.253.6.47
 ```
 
-Export the hard subset:
+### 说明
+
+- 完整评测需要 Docker 容器（32 个应用环境）
+- `--use-official-client` 模式直接调用官方 `eval_client.py`
+- 默认模式通过 OpenAI API 调用 glm-5 做结构化推理
+
+---
+
+## 关键配置说明
+
+### opencode 配置
+
+`run_opencode_swebench.py` 会在每个 worktree 里自动生成 `opencode.json`，包含：
+- glm-5 的 API 地址和 Key
+- 模型参数（context 262144 tokens, output 32768 tokens）
+- 权限控制（禁止修改测试文件）
+
+### 并发控制
 
 ```bash
-agent-benchmark export-webarena-verified \
-  --output data/webarena_verified_hard.jsonl \
-  --split hard
+# 调整并发数（默认 8）
+MAX_WORKERS=4 bash scripts/run_opencode_swebench_pro_full.sh
+
+# 调整单题超时（默认 900s）
+TIMEOUT_SEC=1200 bash scripts/run_opencode_swebench_pro_full.sh
 ```
 
-Print the official workflow:
+### 断点续跑
 
+全量跑脚本默认开启 `--resume`，中断后重新运行会跳过已完成的题目。
+
+---
+
+## 常见问题
+
+### Q: Docker 连不上？
+
+macOS 用 colima 的需要设环境变量：
 ```bash
-agent-benchmark official-runbook --benchmark webarena-verified
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 ```
 
-Official sources:
+### Q: 磁盘空间不够？
 
-- repo: `https://github.com/ServiceNow/webarena-verified`
-- package: `webarena-verified`
-- BrowserGym package: `browsergym-webarena-verified`
-- dataset: `AmineHA/WebArena-Verified`
-
-## Toolathlon
-
-Clone the official repository:
-
+Docker 镜像很大（单个 1-12GB），建议至少预留 50GB。清理方法：
 ```bash
-agent-benchmark clone-official \
-  --benchmark toolathlon \
-  --dest ../benchmarks/Toolathlon
+docker system prune -af
+rm -rf dumps/*/instance_*/workspace   # 清理评测临时文件
 ```
 
-Print the official workflow:
+### Q: Go 语言的题目评测失败？
 
+arm64 Mac 上通过 QEMU 模拟 x86 跑 Go 测试会有兼容性问题。建议：
+- 用 x86 Linux 机器跑评测
+- 或只评测 JS/Python 的题目
+
+### Q: `ModuleNotFoundError: No module named 'datasets'`？
+
+没装依赖。运行：
 ```bash
-agent-benchmark official-runbook --benchmark toolathlon
+cd agent_benchmark
+uv sync
+```
+然后用 `.venv/bin/python` 代替 `python3` 执行。
+
+### Q: opencode 命令找不到？
+
+安装 opencode：
+```bash
+npm install -g opencode-ai
 ```
 
-Official source:
+---
 
-- repo: `https://github.com/hkust-nlp/Toolathlon`
+## 全量评测建议
 
-Toolathlon is environment-heavy. The normal path is:
+1. 使用 **x86 Linux 服务器**（避免 QEMU 兼容性问题）
+2. 磁盘预留 **100GB+**（Docker 镜像 + 731 个 repo 的 worktree）
+3. 设置合理并发：`MAX_WORKERS=8`（取决于 API 速率限制）
+4. 预估时间：8 并发 x 731 题 x ~15min/题 ≈ **23 小时**
+5. 开启 `--resume`，支持中断后继续
 
-- clone the official repo
-- configure the model endpoint and key
-- deploy the required application containers
-- run the official scripts from the upstream repository
+---
 
-## Recommended Workflow
+## 技术架构
 
-For serious evaluation:
-
-1. Export a fixed official subset.
-2. Freeze the instance list in a manifest file.
-3. Freeze batching strategy.
-4. Generate raw outputs without manual intervention.
-5. Extract patches automatically.
-6. Run the upstream official evaluator.
-7. Archive raw outputs, extracted patches, and evaluator outputs.
-
-For quick local debugging:
-
-1. Use `fixtures/sample_tasks.jsonl`.
-2. Run `agent-benchmark run`.
-3. Use `agent-benchmark report` and `agent-benchmark compare`.
-
-## Current Limitations
-
-- this repository does not implement the official `WebArena-Verified` runtime
-- this repository does not replace official `Toolathlon` deployment scripts
-- `bare-llm` is intentionally weak and should not be interpreted as an agent scaffold
-- the local JSONL evaluator is not an official benchmark scorer
-
-## Notes
-
-- keep secrets in environment variables, not in files
-- do not commit local virtual environments
-- do not report generic JSONL smoke-test numbers as official benchmark results
+```
+用户输入题目
+    │
+    ▼
+opencode CLI ──调用──▶ glm-5 API (OpenAI 兼容)
+    │                      │
+    │                      ▼
+    │                 模型分析代码、生成修复
+    │                      │
+    ▼                      ▼
+git worktree ◀── 自动编辑文件
+    │
+    ▼
+git diff ──▶ patch.diff
+    │
+    ▼
+Docker 容器 ──▶ 跑 fail-to-pass 测试
+    │
+    ▼
+判定 PASS / FAIL
+```

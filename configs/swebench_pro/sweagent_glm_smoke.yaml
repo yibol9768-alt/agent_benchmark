@@ -1,0 +1,24 @@
+output_dir: sweagent_results/swebench_pro/glm_smoke_strict
+sweagent_command: |
+  sweagent run-batch \
+    --config /Users/zsk8888/Desktop/lyb/agent_benchmark/configs/swebench_pro/sweagent_glm_strict_thought_action.yaml \
+    --output_dir {output_dir} \
+    --redo_existing=True \
+    --num_workers 1 \
+    --random_delay_multiplier 1 \
+    --instances.type file \
+    --instances.path data/instances.yaml \
+    --instances.slice :1 \
+    --instances.shuffle=False \
+    --instances.deployment.type=docker \
+    --instances.deployment.pull=missing \
+    --instances.deployment.platform linux/amd64 \
+    --instances.deployment.docker_args=--entrypoint= \
+    --instances.deployment.startup_timeout 1800 \
+    --agent.model.name openai/glm-5 \
+    --agent.model.api_base $OPENAI_BASE_URL \
+    --agent.model.api_key $OPENAI_API_KEY \
+    --agent.model.per_instance_cost_limit 0 \
+    --agent.model.per_instance_call_limit 8 \
+    --agent.model.max_input_tokens 0 \
+    --agent.model.max_output_tokens 0
