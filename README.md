@@ -1,56 +1,26 @@
-# Agent Benchmark - OpenCode + GLM-5 评测框架
+# Agent Benchmark - GLM-5 评测框架
 
-本仓库用于评测 **opencode + glm-5** 在多个主流 Agent Benchmark 上的表现。
+本仓库用于评测 **glm-5** 在三个主流 Agent Benchmark 上的表现。
 
-支持三条评测线：
-
-1. **SWE-Bench Pro** — 731 道真实软件工程 bug 修复任务（JS/Python/Go/TS）
-2. **WebArena-Verified** — 812 道 web 浏览交互任务
-3. **Toolathlon** — 108 道多步骤工具调用任务（32 个真实应用）
-
----
-
-## 目录结构
-
-```
-agent_benchmark/
-├── benchmark_suite/              # 核心评测代码
-│   ├── run_opencode_swebench.py      # SWE-Bench Pro patch 生成器
-│   ├── run_openhands_swebench_pro.py # OpenHands 方案（备选）
-│   ├── run_webarena_verified.py      # WebArena-Verified 评测
-│   ├── run_toolathlon.py             # Toolathlon 评测
-│   └── evaluate_swebench_pro.py      # SWE-Bench Pro 自定义评测脚本
-├── scripts/                      # 一键运行脚本
-│   ├── run_opencode_swebench_pro_smoke.sh   # SWE-Bench 单题测试
-│   ├── run_opencode_swebench_pro_full.sh    # SWE-Bench 全量跑
-│   ├── run_webarena_verified_smoke.sh       # WebArena smoke test
-│   ├── run_toolathlon_smoke.sh              # Toolathlon smoke test
-│   ├── setup_webarena.sh                    # WebArena 环境安装
-│   ├── setup_toolathlon.sh                  # Toolathlon 环境安装
-│   └── ...
-├── configs/                      # 配置文件
-│   ├── webarena/env_urls.json        # WebArena web 环境地址
-│   └── swebench_pro/                 # SWE-agent 配置
-├── vendor/                       # 第三方依赖（git clone）
-├── dumps/                        # 运行结果输出目录
-└── pyproject.toml                # Python 依赖管理（uv）
-```
+| 数据集 | 任务数 | 任务类型 | Agent 框架 | 评测方式 |
+|--------|--------|----------|-----------|---------|
+| **SWE-Bench Pro** | 731 | 代码 bug 修复 | opencode (代码 Agent) | 官方 Docker 评测 |
+| **Toolathlon** | 108 | 多步骤工具调用 | 官方 eval_client (远程服务器) | 官方远程评测 |
+| **WebArena-Verified** | 812 | Web 浏览交互 | glm-5 API 直接调用 | 官方 webarena-verified |
 
 ---
 
 ## 前置要求
 
 - **Python 3.13+**
-- **uv**（Python 包管理器）：`curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **opencode**（代码 Agent CLI）：`npm install -g opencode-ai`
-- **Docker**（评测需要）：macOS 用 colima，Linux 直接装 docker
+- **uv**（包管理器）：`curl -LsSf https://astral.sh/uv/install.sh | sh`
+- **opencode**（仅 SWE-Bench 需要）：`npm install -g opencode-ai`
+- **Docker**（SWE-Bench 评测 + WebArena 环境需要）
 - **Git**
 
 ---
 
-## 快速开始
-
-### 1. 克隆仓库并安装依赖
+## 安装
 
 ```bash
 git clone https://github.com/yibol9768-alt/agent_benchmark.git
@@ -58,7 +28,7 @@ cd agent_benchmark
 uv sync
 ```
 
-### 2. 配置环境变量
+### 配置环境变量
 
 ```bash
 export GLM_API_KEY="你的API Key"
@@ -66,94 +36,83 @@ export GLM_BASE_URL="http://35.220.164.252:3888/v1/"
 export GLM_MODEL="glm-5"
 ```
 
-API 使用 OpenAI 兼容格式，支持 `glm-5` 和 `MiniMax-M2.7` 模型。
-
-### 3. 验证 API 连通性
+### 验证 API
 
 ```bash
 .venv/bin/python -c "
 from openai import OpenAI
-client = OpenAI(base_url='$GLM_BASE_URL', api_key='$GLM_API_KEY')
+client = OpenAI(base_url='http://35.220.164.252:3888/v1/', api_key='$GLM_API_KEY')
 r = client.chat.completions.create(model='glm-5', messages=[{'role':'user','content':'hello'}], max_tokens=10)
-print('API OK:', r.choices[0].message.content)
+print('OK:', r.choices[0].message.content)
 "
 ```
 
 ---
 
-## SWE-Bench Pro 评测
+## 一、SWE-Bench Pro（代码修复）
 
-### 数据集
+### 原理
 
-- HuggingFace: `ScaleAI/SWE-bench_Pro`
-- 731 道题，覆盖 11 个开源仓库
-- 语言分布：Go 280 / Python 266 / JS 165 / TS 20
+opencode CLI 调用 glm-5 读代码、分析 bug、自动编辑文件，产出 git diff patch。然后用官方 Docker 环境跑测试判定 pass/fail。
 
-### 评测流程
+### 流程
 
-整个流程分两步：**生成 patch** 和 **跑测试评分**。
+```
+opencode + glm-5 ──▶ 分析代码 ──▶ 编辑修复 ──▶ patch.diff
+                                                    │
+                         官方 Docker 镜像 ◀─────────┘
+                              │
+                         跑 fail-to-pass 测试
+                              │
+                         判定 PASS / FAIL
+```
 
-#### 第一步：生成 patch
+### 跑法
 
-opencode 调用 glm-5 分析代码、定位 bug、自动修改文件，产出 git diff 格式的 patch。
+#### 单题测试（验证环境）
 
 ```bash
-# 先跑单题 smoke test，确认环境没问题
 bash scripts/run_opencode_swebench_pro_smoke.sh
-
-# 跑 N 题试水（可调 LIMIT 和并发数）
-LIMIT=20 MAX_WORKERS=4 bash scripts/run_opencode_swebench_pro_full.sh
-
-# 全量跑 731 题（默认 8 并发，每题最多 900s）
-bash scripts/run_opencode_swebench_pro_full.sh
 ```
 
-输出在 `dumps/opencode_swebench_pro_full/`，每道题一个目录：
-```
-instance_<id>/
-├── summary.json          # 运行摘要（耗时、exit code、diff 大小）
-├── patch.diff            # glm-5 生成的 patch
-├── prompt.txt            # 给模型的 prompt
-├── opencode_stdout.txt   # opencode 运行日志
-└── opencode_stderr.txt   # opencode 错误日志
-```
-
-跑完会自动生成 `patches_for_eval.json`（标准格式）和 `results_summary.json`（汇总统计）。
-
-#### 第二步：官方评测
-
-需要 SWE-Bench Pro 官方评测仓库（找学长要或联系负责人获取路径）。
+#### 全量跑 731 题
 
 ```bash
-# macOS colima 用户需要先设 DOCKER_HOST
+# 默认 8 并发，每题最多 900 秒，支持断点续跑
+bash scripts/run_opencode_swebench_pro_full.sh
+
+# 自定义参数
+LIMIT=20 MAX_WORKERS=4 TIMEOUT_SEC=1200 bash scripts/run_opencode_swebench_pro_full.sh
+```
+
+#### 官方评测
+
+需要 SWE-Bench Pro 官方评测仓库（问学长要路径）。
+
+```bash
+# macOS 需要设 Docker 环境变量
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+colima start
 
-# 启动 Docker
-colima start   # macOS
-# Linux 不需要这步
-
-# 生成评测用的数据集文件
+# 导出数据集
 .venv/bin/python -c "
-from datasets import load_dataset
-import json
+from datasets import load_dataset; import json
 ds = load_dataset('ScaleAI/SWE-bench_Pro', split='test')
 with open('dumps/opencode_swebench_pro_full/raw_samples.jsonl', 'w') as f:
     for row in ds:
         row = dict(row)
         for k, v in row.items():
-            if isinstance(v, list):
-                row[k] = json.dumps(v)
+            if isinstance(v, list): row[k] = json.dumps(v)
         f.write(json.dumps(row, ensure_ascii=False) + '\n')
-print('Done')
 "
 
-# 用官方脚本评测
-cd /path/to/SWE-bench_Pro-os   # 官方评测仓库路径
+# 跑官方评测
+cd /path/to/SWE-bench_Pro-os
 source SWE-agent/.venv/bin/activate
 python swe_bench_pro_eval.py \
-  --raw_sample_path="<agent_benchmark>/dumps/opencode_swebench_pro_full/raw_samples.jsonl" \
-  --patch_path="<agent_benchmark>/dumps/opencode_swebench_pro_full/patches_for_eval.json" \
-  --output_dir="<agent_benchmark>/dumps/opencode_swebench_pro_full/eval_output" \
+  --raw_sample_path="<路径>/raw_samples.jsonl" \
+  --patch_path="<路径>/patches_for_eval.json" \
+  --output_dir="<路径>/eval_output" \
   --scripts_dir=run_scripts \
   --num_workers=4 \
   --dockerhub_username=jefzda \
@@ -161,181 +120,258 @@ python swe_bench_pro_eval.py \
   --docker_platform=linux/amd64
 ```
 
-评测结果会输出 `Overall accuracy: X.XX`，这就是最终成绩。
+### 输出
 
-### 已验证的结果
-
-在本地 2 道题测试中：
-- **NodeBB** (JS, 300 个测试): PASS
-- **qutebrowser** (Python, 56 个测试): PASS
-- **Accuracy: 100% (2/2)**
-
-注意：Go 语言的 repo 在 arm64 Mac (QEMU 模拟) 上可能有环境兼容性问题，建议用 x86 Linux 机器跑全量评测。
-
----
-
-## WebArena-Verified 评测
-
-### 数据集
-
-- HuggingFace: `AmineHA/WebArena-Verified`
-- 812 道 web 浏览交互任务
-- 覆盖：GitLab、购物站、Reddit、Wikipedia、地图等网站
-
-### 运行
-
-```bash
-# 安装（克隆官方 repo）
-bash scripts/setup_webarena.sh
-
-# 跑 smoke test（默认 3 题）
-bash scripts/run_webarena_verified_smoke.sh
-
-# 自定义参数
-LIMIT=10 bash scripts/run_webarena_verified_smoke.sh \
-  dumps/webarena_test \
-  glm-5
+```
+dumps/opencode_swebench_pro_full/
+├── run_manifest.json         # 运行配置
+├── results_summary.json      # 汇总统计
+├── patches_for_eval.json     # 所有 patch（送评测用）
+└── instance_<id>/
+    ├── summary.json          # 单题摘要
+    ├── patch.diff            # glm-5 生成的 patch
+    └── opencode_stdout.txt   # 运行日志
 ```
 
-### 说明
+### 已验证结果
 
-- 当前 runner 通过 OpenAI API 调用 glm-5，模型返回结构化 JSON 响应
-- 完整的交互式评测需要部署 Web 环境（GitLab、购物站等 Docker 服务），参见 `vendor/webarena-verified/` 的文档
-- 环境 URL 配置在 `configs/webarena/env_urls.json`
+| 实例 | 语言 | 测试数 | 结果 |
+|------|------|--------|------|
+| NodeBB | JS | 300 | **PASS** (300/300) |
+| qutebrowser | Python | 56 | **PASS** (56/56) |
 
 ---
 
-## Toolathlon 评测
+## 二、Toolathlon（工具调用）
 
-### 数据集
+### 原理
 
-- HuggingFace: `hkust-nlp/Toolathlon-Trajectories`
-- 108 道多步骤工具调用任务
-- 覆盖 32 个真实应用（Google Calendar、Notion、Slack、Kubernetes 等）
+Toolathlon 提供**公共远程评测服务器**（47.253.6.47），上面部署了 32 个真实应用（Google Calendar、Slack、Kubernetes、BigQuery 等）。评测时服务器发任务给 glm-5，glm-5 通过 API 调用工具完成任务，服务器验证结果。
 
-### 运行
+不需要本地搭环境，直接调官方 eval_client 就行。
+
+### 流程
+
+```
+eval_client.py ──▶ 远程服务器 (47.253.6.47)
+                       │
+                  发任务给 glm-5 API
+                       │
+                  glm-5 调用 MCP 工具
+                       │
+                  服务器验证最终状态
+                       │
+                  返回 PASS / FAIL
+```
+
+### 跑法
+
+#### 安装
 
 ```bash
-# 安装（克隆官方 repo）
 bash scripts/setup_toolathlon.sh
+```
 
-# 跑 smoke test（默认 3 题）
+#### 单题测试
+
+```bash
 bash scripts/run_toolathlon_smoke.sh
+```
 
-# 使用官方 eval_client（需要 Docker 环境）
+#### 全量跑 108 题
+
+```bash
+# 默认 10 并发
+bash scripts/run_toolathlon_full.sh
+
+# 自定义
+WORKERS=5 bash scripts/run_toolathlon_full.sh dumps/toolathlon_glm5 glm-5
+```
+
+#### 直接用 eval_client
+
+```bash
 .venv/bin/python benchmark_suite/run_toolathlon.py \
-  --output-root dumps/toolathlon_official \
   --model glm-5 \
   --base-url "$GLM_BASE_URL" \
   --api-key "$GLM_API_KEY" \
-  --use-official-client \
-  --server-host 47.253.6.47
+  --output-dir dumps/toolathlon_glm5 \
+  --workers 10
 ```
 
-### 说明
+### 输出
 
-- 完整评测需要 Docker 容器（32 个应用环境）
-- `--use-official-client` 模式直接调用官方 `eval_client.py`
-- 默认模式通过 OpenAI API 调用 glm-5 做结构化推理
+```
+dumps/toolathlon_glm5/
+├── client.log              # 实时日志（用 tail -f 监控）
+├── server.log              # 服务器日志
+├── eval_stats.json         # 最终评测统计
+├── traj_log_all.jsonl      # 所有任务的执行轨迹
+└── finalpool/              # 每个任务的详细结果
+    ├── task_name_1/
+    └── task_name_2/
+```
+
+### 注意事项
+
+- 公共服务器有速率限制：每 IP 每 24 小时最多 3 次评测，累计 180 分钟
+- 需要更高限额联系：jlini@cse.ust.hk
+- 全量 108 题大约需要 2-4 小时
 
 ---
 
-## 关键配置说明
+## 三、WebArena-Verified（Web 浏览）
 
-### opencode 配置
+### 原理
 
-`run_opencode_swebench.py` 会在每个 worktree 里自动生成 `opencode.json`，包含：
-- glm-5 的 API 地址和 Key
-- 模型参数（context 262144 tokens, output 32768 tokens）
-- 权限控制（禁止修改测试文件）
+WebArena 是 web 浏览交互评测。任务要求 agent 在真实网站上操作（搜索商品、管理 GitLab 项目等）。
 
-### 并发控制
+当前方案：glm-5 通过 API 分析任务，产出结构化响应。完整交互评测需要部署 Web 环境。
+
+### 流程
+
+```
+任务描述 ──▶ glm-5 API ──▶ 结构化响应 (agent_response.json)
+                                │
+                    webarena-verified eval ◀──┘
+                         │
+                    判定 PASS / FAIL
+```
+
+### 跑法
+
+#### Smoke test（不需要 Web 环境）
 
 ```bash
-# 调整并发数（默认 8）
-MAX_WORKERS=4 bash scripts/run_opencode_swebench_pro_full.sh
-
-# 调整单题超时（默认 900s）
-TIMEOUT_SEC=1200 bash scripts/run_opencode_swebench_pro_full.sh
+bash scripts/run_webarena_verified_smoke.sh
 ```
+
+#### 完整评测（需要 Web 环境）
+
+先部署 Web 环境：
+
+```bash
+# 购物站
+docker run -d --name webarena-shopping -p 7770:80 am1n3e/webarena-verified-shopping
+
+# Reddit
+docker run -d --name webarena-reddit -p 9999:80 am1n3e/webarena-verified-reddit
+
+# GitLab
+docker run -d --name webarena-gitlab -p 8023:8023 am1n3e/webarena-verified-gitlab
+```
+
+创建配置文件 `configs/webarena/webarena_config.json`：
+
+```json
+{
+  "__GITLAB__": {
+    "urls": ["http://localhost:8023"],
+    "credentials": {"username": "root", "password": "demopass"}
+  },
+  "__SHOPPING__": {
+    "urls": ["http://localhost:7770"]
+  },
+  "__REDDIT__": {
+    "urls": ["http://localhost:9999"]
+  }
+}
+```
+
+跑评测：
+
+```bash
+bash scripts/run_webarena_verified_full.sh
+```
+
+### 输出
+
+```
+dumps/webarena_verified_full/
+├── summary.json                # 汇总
+└── <task_id>/
+    ├── agent_response.json     # agent 输出（标准格式）
+    ├── raw_response.txt        # 模型原始输出
+    └── prompt.txt              # 任务 prompt
+```
+
+---
+
+## 配置参数
+
+### 并发与超时
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `MAX_WORKERS` | 8 (SWE-Bench) / 10 (Toolathlon) | 并发数 |
+| `TIMEOUT_SEC` | 900 | SWE-Bench 单题超时（秒）|
+| `LIMIT` | 无 | 限制跑的题目数量 |
 
 ### 断点续跑
 
-全量跑脚本默认开启 `--resume`，中断后重新运行会跳过已完成的题目。
-
----
-
-## 常见问题
-
-### Q: Docker 连不上？
-
-macOS 用 colima 的需要设环境变量：
-```bash
-export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-```
-
-### Q: 磁盘空间不够？
-
-Docker 镜像很大（单个 1-12GB），建议至少预留 50GB。清理方法：
-```bash
-docker system prune -af
-rm -rf dumps/*/instance_*/workspace   # 清理评测临时文件
-```
-
-### Q: Go 语言的题目评测失败？
-
-arm64 Mac 上通过 QEMU 模拟 x86 跑 Go 测试会有兼容性问题。建议：
-- 用 x86 Linux 机器跑评测
-- 或只评测 JS/Python 的题目
-
-### Q: `ModuleNotFoundError: No module named 'datasets'`？
-
-没装依赖。运行：
-```bash
-cd agent_benchmark
-uv sync
-```
-然后用 `.venv/bin/python` 代替 `python3` 执行。
-
-### Q: opencode 命令找不到？
-
-安装 opencode：
-```bash
-npm install -g opencode-ai
-```
+- SWE-Bench: 默认开启 `--resume`，重跑会跳过已完成的题
+- Toolathlon: 用相同 `--job-id` 可以续跑
 
 ---
 
 ## 全量评测建议
 
-1. 使用 **x86 Linux 服务器**（避免 QEMU 兼容性问题）
-2. 磁盘预留 **100GB+**（Docker 镜像 + 731 个 repo 的 worktree）
-3. 设置合理并发：`MAX_WORKERS=8`（取决于 API 速率限制）
-4. 预估时间：8 并发 x 731 题 x ~15min/题 ≈ **23 小时**
-5. 开启 `--resume`，支持中断后继续
+| 项目 | 建议配置 |
+|------|---------|
+| 机器 | **x86 Linux**（避免 QEMU 兼容性问题）|
+| 磁盘 | 100GB+（Docker 镜像 + repo worktree）|
+| SWE-Bench 时间 | 8 并发 × 731 题 ≈ **23 小时** |
+| Toolathlon 时间 | 10 并发 × 108 题 ≈ **2-4 小时** |
+| WebArena 时间 | 812 题 ≈ **3-5 小时**（取决于 API 速度）|
 
 ---
 
-## 技术架构
+## 目录结构
 
 ```
-用户输入题目
-    │
-    ▼
-opencode CLI ──调用──▶ glm-5 API (OpenAI 兼容)
-    │                      │
-    │                      ▼
-    │                 模型分析代码、生成修复
-    │                      │
-    ▼                      ▼
-git worktree ◀── 自动编辑文件
-    │
-    ▼
-git diff ──▶ patch.diff
-    │
-    ▼
-Docker 容器 ──▶ 跑 fail-to-pass 测试
-    │
-    ▼
-判定 PASS / FAIL
+agent_benchmark/
+├── benchmark_suite/                      # 核心代码
+│   ├── run_opencode_swebench.py              # SWE-Bench patch 生成
+│   ├── evaluate_swebench_pro.py              # SWE-Bench 自定义评测
+│   ├── run_toolathlon.py                     # Toolathlon 官方 eval_client 封装
+│   └── run_webarena_verified.py              # WebArena agent + 评测
+├── scripts/                              # 一键脚本
+│   ├── run_opencode_swebench_pro_full.sh     # SWE-Bench 全量
+│   ├── run_toolathlon_full.sh                # Toolathlon 全量
+│   ├── run_webarena_verified_full.sh         # WebArena 全量
+│   ├── run_*_smoke.sh                        # 各 benchmark smoke test
+│   └── setup_*.sh                            # 环境安装
+├── configs/                              # 配置文件
+│   └── webarena/env_urls.json                # WebArena 环境地址
+├── vendor/                               # 第三方依赖
+│   └── toolathlon/                           # Toolathlon 官方 repo
+├── dumps/                                # 运行结果
+└── pyproject.toml                        # Python 依赖
 ```
+
+---
+
+## 常见问题
+
+### Docker 连不上（macOS）
+```bash
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
+colima start
+```
+
+### 磁盘空间不够
+```bash
+docker system prune -af              # 清 Docker
+rm -rf dumps/*/instance_*/workspace  # 清评测临时文件
+```
+
+### Go 语言题目评测失败
+arm64 Mac 上 QEMU 模拟 x86 跑 Go 测试会有兼容性问题。用 x86 Linux 机器跑。
+
+### ModuleNotFoundError
+```bash
+uv sync   # 重装依赖
+```
+
+### Toolathlon 速率限制
+公共服务器每 IP 每天限 3 次。联系 jlini@cse.ust.hk 申请更高限额。

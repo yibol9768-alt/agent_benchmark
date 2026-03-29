@@ -1,8 +1,30 @@
+"""Run WebArena-Verified evaluation using the official webarena-verified framework.
+
+This script implements a web browsing agent powered by glm-5 that:
+1. Receives task definitions from the WebArena-Verified dataset
+2. Uses glm-5 to analyze web tasks and reason about actions
+3. Produces structured agent responses (agent_response.json)
+4. Calls webarena-verified eval to score results deterministically
+
+Prerequisites:
+    - Web environments must be running (Docker containers for GitLab, shopping, etc.)
+    - See scripts/setup_webarena.sh for environment setup
+    - Config file with environment URLs (configs/webarena/env_urls.json)
+
+Usage:
+    .venv/bin/python benchmark_suite/run_webarena_verified.py \
+        --model glm-5 \
+        --base-url "$GLM_BASE_URL" \
+        --api-key "$GLM_API_KEY" \
+        --output-dir dumps/webarena_glm5 \
+        --config configs/webarena/webarena_config.json
+"""
 from __future__ import annotations
 
 import argparse
 import json
-import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -11,38 +33,41 @@ from datasets import load_dataset
 from openai import OpenAI
 
 
-SYSTEM_PROMPT = """You are a web browsing agent. You are given a task to complete on a website.
-You must analyze the task and provide a structured JSON response.
+AGENT_SYSTEM_PROMPT = """You are a web browsing agent tasked with completing tasks on real websites.
 
-Your response MUST be valid JSON with exactly these fields:
+You will receive a task description and information about available web environments.
+Analyze the task carefully and determine:
+1. What type of task this is (retrieve information, perform an action, or navigate)
+2. What steps you would take to complete it
+3. The final answer or result
+
+You MUST respond with a JSON object in this exact format:
 {
-  "task_type": "<retrieve_information|perform_action|multi_step>",
-  "status": "<success|failure|partial>",
-  "retrieved_data": "<the answer or result, or null if action-only task>",
-  "action_summary": "<brief description of what you did or would do>",
-  "error_details": "<null if successful, otherwise describe the issue>"
+  "task_type": "RETRIEVE" or "MUTATE" or "NAVIGATE",
+  "status": "SUCCESS" or "FAILURE",
+  "retrieved_data": ["value1", "value2"] or null,
+  "action_summary": "Brief description of actions taken",
+  "error_details": null or "description of why it failed"
 }
 
-Guidelines:
-- For information retrieval tasks: extract the precise answer from the website context.
-- For action tasks: describe the exact steps and parameters needed.
-- For multi-step tasks: break down into ordered steps and report the final result.
-- Be precise with numbers, dates, names, and URLs.
-- If the task requires interacting with a specific website, reason about what pages and elements would be involved.
+Rules:
+- For RETRIEVE tasks: extract precise data (numbers, names, dates, URLs)
+- For MUTATE tasks: describe the exact changes made
+- For NAVIGATE tasks: confirm navigation was completed
+- retrieved_data must be a list of strings, even for single values
+- Be precise with numbers, dates, and proper nouns
+- If the task requires actual web interaction you cannot perform, set status to FAILURE with explanation
 """
 
 
-def log(message: str) -> None:
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {message}", flush=True)
+def log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def load_webarena_tasks(
-    split: str, limit: int | None, task_ids: set[int] | None
-) -> list[dict[str, Any]]:
-    dataset = load_dataset("AmineHA/WebArena-Verified", split=split)
+def load_tasks(split: str, limit: int | None, task_ids: set[int] | None) -> list[dict[str, Any]]:
+    ds = load_dataset("AmineHA/WebArena-Verified", split=split)
     tasks: list[dict[str, Any]] = []
-    for row in dataset:
+    for row in ds:
         row = dict(row)
         if task_ids and row["task_id"] not in task_ids:
             continue
@@ -52,162 +77,175 @@ def load_webarena_tasks(
     return tasks
 
 
-def build_task_prompt(task: dict[str, Any], env_config: dict[str, Any] | None) -> str:
+def build_prompt(task: dict[str, Any], env_config: dict[str, Any] | None) -> str:
     intent = task["intent"]
-    start_urls = task.get("start_urls") or []
-    sites = task.get("sites") or []
+    start_urls = task.get("start_urls", [])
+    sites = task.get("sites", [])
 
-    url_section = ""
+    parts = [f"Task: {intent}"]
+
     if start_urls:
-        url_section = f"\nStart URLs: {json.dumps(start_urls)}"
-    site_section = ""
+        if isinstance(start_urls, str):
+            start_urls = json.loads(start_urls) if start_urls.startswith("[") else [start_urls]
+        parts.append(f"Start URL(s): {', '.join(str(u) for u in start_urls)}")
+
     if sites:
-        site_section = f"\nWebsites involved: {', '.join(sites)}"
+        if isinstance(sites, str):
+            sites = json.loads(sites) if sites.startswith("[") else [sites]
+        parts.append(f"Website(s): {', '.join(str(s) for s in sites)}")
 
-    env_section = ""
     if env_config:
-        available_sites = []
+        env_lines = []
         for key, cfg in env_config.items():
-            urls = cfg.get("urls", [])
-            if urls:
-                available_sites.append(f"  {key}: {urls[0]}")
-        if available_sites:
-            env_section = "\n\nAvailable web environments:\n" + "\n".join(available_sites)
+            if isinstance(cfg, dict):
+                urls = cfg.get("urls", [])
+                creds = cfg.get("credentials", {})
+                if urls:
+                    cred_str = ""
+                    if creds:
+                        cred_str = f" (login: {creds.get('username', 'N/A')})"
+                    env_lines.append(f"  {key}: {urls[0]}{cred_str}")
+        if env_lines:
+            parts.append("Available environments:\n" + "\n".join(env_lines))
 
-    return f"""Task: {intent}
-{url_section}{site_section}{env_section}
+    template = task.get("intent_template", "")
+    if template and template != intent:
+        parts.append(f"Template: {template}")
 
-Analyze this web task and provide your structured JSON response."""
+    inst_dict = task.get("instantiation_dict", "")
+    if inst_dict:
+        if isinstance(inst_dict, str) and inst_dict.strip():
+            parts.append(f"Parameters: {inst_dict}")
+
+    parts.append("\nProvide your response as the specified JSON format.")
+    return "\n\n".join(parts)
 
 
-def call_llm(
-    client: OpenAI, model: str, task_prompt: str, temperature: float = 0.0
-) -> str:
+def call_agent(client: OpenAI, model: str, prompt: str) -> tuple[str, dict[str, Any] | None]:
     response = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": task_prompt},
+            {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
         ],
-        temperature=temperature,
+        temperature=0.0,
     )
-    return response.choices[0].message.content or ""
+    raw = response.choices[0].message.content or ""
 
-
-def parse_agent_response(raw: str) -> dict[str, Any] | None:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        lines = raw.splitlines()
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
         start = 1
         end = len(lines)
         for i, line in enumerate(lines[1:], 1):
             if line.strip().startswith("```"):
                 end = i
                 break
-        raw = "\n".join(lines[start:end])
+        text = "\n".join(lines[start:end])
+
     try:
-        return json.loads(raw)
+        parsed = json.loads(text)
+        return raw, parsed
     except json.JSONDecodeError:
-        return None
+        return raw, None
 
 
-def evaluate_response(task: dict[str, Any], agent_response: dict[str, Any] | None) -> dict[str, Any]:
-    if agent_response is None:
-        return {"parsed": False, "score": 0.0, "reason": "Failed to parse agent response as JSON"}
-
-    eval_spec = task.get("eval")
-    if eval_spec:
-        try:
-            evaluators = json.loads(eval_spec) if isinstance(eval_spec, str) else eval_spec
-        except (json.JSONDecodeError, TypeError):
-            evaluators = None
-    else:
-        evaluators = None
-
-    result: dict[str, Any] = {
-        "parsed": True,
-        "task_type": agent_response.get("task_type"),
-        "status": agent_response.get("status"),
-        "has_retrieved_data": agent_response.get("retrieved_data") is not None,
-        "evaluator_count": len(evaluators) if isinstance(evaluators, list) else 0,
-    }
-
-    if isinstance(evaluators, list):
-        for ev in evaluators:
-            if isinstance(ev, dict) and ev.get("eval_types"):
-                result["eval_types"] = ev["eval_types"]
-                break
-
-    result["score"] = 1.0 if agent_response.get("status") == "success" else 0.0
-    result["reason"] = "Structural evaluation only; full evaluation requires live web environment"
-    return result
-
-
-def run_instance(
+def run_task(
     task: dict[str, Any],
     client: OpenAI,
     model: str,
-    output_root: Path,
+    output_dir: Path,
     env_config: dict[str, Any] | None,
 ) -> dict[str, Any]:
     task_id = task["task_id"]
-    task_dir = output_root / f"task_{task_id}"
+    task_dir = output_dir / str(task_id)
     task_dir.mkdir(parents=True, exist_ok=True)
 
-    summary_path = task_dir / "summary.json"
-    if summary_path.exists():
-        log(f"task_{task_id}: skipped, summary already exists")
-        return json.loads(summary_path.read_text())
+    result_file = task_dir / "result.json"
+    if result_file.exists():
+        return json.loads(result_file.read_text())
 
-    prompt = build_task_prompt(task, env_config)
+    prompt = build_prompt(task, env_config)
     (task_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
 
-    log(f"task_{task_id}: calling LLM")
     started = time.time()
     error = None
-    raw_response = ""
+    raw = ""
+    parsed = None
     try:
-        raw_response = call_llm(client, model, prompt)
+        raw, parsed = call_agent(client, model, prompt)
     except Exception as exc:
         error = str(exc)
     elapsed = time.time() - started
 
-    (task_dir / "raw_response.txt").write_text(raw_response, encoding="utf-8")
+    (task_dir / "raw_response.txt").write_text(raw, encoding="utf-8")
 
-    agent_response = parse_agent_response(raw_response)
-    if agent_response is not None:
-        (task_dir / "agent_response.json").write_text(
-            json.dumps(agent_response, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+    # Write agent_response.json in WebArena-Verified format
+    if parsed:
+        agent_response = {
+            "task_type": parsed.get("task_type", "RETRIEVE"),
+            "status": parsed.get("status", "FAILURE"),
+            "retrieved_data": parsed.get("retrieved_data"),
+            "error_details": parsed.get("error_details"),
+        }
+    else:
+        agent_response = {
+            "task_type": "RETRIEVE",
+            "status": "FAILURE",
+            "retrieved_data": None,
+            "error_details": error or "Failed to parse model response",
+        }
+    (task_dir / "agent_response.json").write_text(
+        json.dumps(agent_response, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
-    eval_result = evaluate_response(task, agent_response)
-
-    summary = {
+    result = {
         "task_id": task_id,
         "intent": task.get("intent", ""),
-        "sites": task.get("sites", []),
         "elapsed_sec": round(elapsed, 2),
         "error": error,
-        "response_len": len(raw_response),
-        "parsed": eval_result.get("parsed", False),
-        "eval": eval_result,
+        "parsed": parsed is not None,
+        "agent_response": agent_response,
     }
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    log(f"task_{task_id}: done elapsed={elapsed:.2f}s parsed={eval_result.get('parsed')}")
-    return summary
+    result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    return result
+
+
+def run_official_eval(output_dir: Path, config_path: Path, task_ids: list[int]) -> None:
+    """Run the official webarena-verified eval on agent outputs."""
+    cmd = [
+        sys.executable, "-m", "webarena_verified",
+        "eval-tasks",
+        "--config", str(config_path),
+        "--output-dir", str(output_dir),
+    ]
+    if task_ids:
+        cmd.extend(["--task-ids", ",".join(str(t) for t in task_ids)])
+
+    log("Running official webarena-verified evaluation...")
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode == 0:
+        log("Official evaluation completed")
+        if proc.stdout:
+            print(proc.stdout)
+    else:
+        log(f"Official evaluation failed (might need web environments running)")
+        if proc.stderr:
+            print(proc.stderr[:500])
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run WebArena-Verified with GLM via OpenAI API.")
-    parser.add_argument("--output-root", required=True)
+    parser = argparse.ArgumentParser(description="Run WebArena-Verified with glm-5.")
     parser.add_argument("--model", required=True)
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--api-key", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--config", help="WebArena config JSON (environment URLs)")
     parser.add_argument("--split", default="full")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--task-id", type=int, action="append")
-    parser.add_argument("--env-config", help="Path to env_urls.json for web environment URLs")
-    parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--run-eval", action="store_true",
+                        help="Run official webarena-verified eval after agent (requires web environments)")
     args = parser.parse_args()
 
     model_name = args.model
@@ -215,52 +253,44 @@ def main() -> None:
         model_name = model_name.split("/", 1)[1]
 
     client = OpenAI(base_url=args.base_url, api_key=args.api_key)
-
-    task_ids = set(args.task_id) if args.task_id else None
-    tasks = load_webarena_tasks(split=args.split, limit=args.limit, task_ids=task_ids)
-    if not tasks:
-        raise SystemExit("No tasks selected.")
+    output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     env_config = None
-    if args.env_config:
-        env_config = json.loads(Path(args.env_config).read_text())
+    if args.config:
+        config_path = Path(args.config).resolve()
+        env_config = json.loads(config_path.read_text())
 
-    output_root = Path(args.output_root)
-    output_root.mkdir(parents=True, exist_ok=True)
+    task_ids = set(args.task_id) if args.task_id else None
+    tasks = load_tasks(split=args.split, limit=args.limit, task_ids=task_ids)
+    if not tasks:
+        print("No tasks selected.")
+        sys.exit(1)
 
-    manifest = {
-        "benchmark": "WebArena-Verified",
-        "model": args.model,
-        "split": args.split,
-        "limit": args.limit,
-        "task_ids": sorted(task_ids) if task_ids else None,
-        "count": len(tasks),
-    }
-    (output_root / "run_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    log(f"Running {len(tasks)} WebArena-Verified tasks with {args.model}")
 
-    summaries: list[dict[str, Any]] = []
+    results = []
     for task in tasks:
-        summary = run_instance(
-            task=task, client=client, model=model_name,
-            output_root=output_root, env_config=env_config,
-        )
-        summaries.append(summary)
+        tid = task["task_id"]
+        result = run_task(task, client, model_name, output_dir, env_config)
+        results.append(result)
+        status = result["agent_response"]["status"]
+        log(f"  task {tid}: {status} ({result['elapsed_sec']:.1f}s)")
 
-    total = len(summaries)
-    parsed = sum(1 for s in summaries if s.get("parsed"))
-    errors = sum(1 for s in summaries if s.get("error"))
-    log(f"Finished: {total} tasks, {parsed} parsed, {errors} errors")
+    total = len(results)
+    parsed = sum(1 for r in results if r.get("parsed"))
+    success = sum(1 for r in results if r["agent_response"]["status"] == "SUCCESS")
 
-    results_path = output_root / "results_summary.json"
-    results_path.write_text(
-        json.dumps(
-            {"total": total, "parsed": parsed, "errors": errors, "summaries": summaries},
-            ensure_ascii=False, indent=2,
-        ),
-        encoding="utf-8",
+    log(f"\nDone: {total} tasks, {parsed} parsed, {success} reported success")
+
+    summary = {"total": total, "parsed": parsed, "success": success, "results": results}
+    (output_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+    if args.run_eval and args.config:
+        evaluated_ids = [r["task_id"] for r in results]
+        run_official_eval(output_dir, Path(args.config).resolve(), evaluated_ids)
 
 
 if __name__ == "__main__":
