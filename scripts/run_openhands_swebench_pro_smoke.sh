@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/zsk8888/Desktop/lyb/agent_benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 OUTPUT_ROOT="${1:-$ROOT_DIR/dumps/openhands_swebench_pro_smoke}"
 INSTANCE_ID="${2:-instance_NodeBB__NodeBB-04998908ba6721d64eba79ae3b65a351dcfbc5b5-vnan}"
 MODEL_NAME="${3:-${GLM_MODEL:-glm-5}}"

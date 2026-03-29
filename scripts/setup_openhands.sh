@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/zsk8888/Desktop/lyb/agent_benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OPENHANDS_DIR="${1:-$ROOT_DIR/vendor/openhands-benchmarks}"
 OPENHANDS_REPO_URL="${OPENHANDS_REPO_URL:-https://github.com/OpenHands/benchmarks.git}"
 UV_BIN="${HOME}/.local/bin/uv"

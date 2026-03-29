@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/zsk8888/Desktop/lyb/agent_benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OPENHANDS_DIR="${OPENHANDS_DIR:-$ROOT_DIR/vendor/openhands-benchmarks}"
 INPUT_FILE="${1:-$ROOT_DIR/dumps/openhands_verified_smoke/output.jsonl}"
 RUN_ID="${2:-openhands_verified_eval}"

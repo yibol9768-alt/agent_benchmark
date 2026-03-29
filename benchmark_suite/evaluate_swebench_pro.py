@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCRIPTS_DIR = Path("/Users/zsk8888/Desktop/lyb/benchmarks/SWE-bench_Pro-os/run_scripts")
+SCRIPTS_DIR = Path(os.environ.get("SWEBENCH_PRO_SCRIPTS_DIR", "run_scripts"))
 DOCKERHUB_USERNAME = "jefzda"
 
 

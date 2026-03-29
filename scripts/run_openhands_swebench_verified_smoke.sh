@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/zsk8888/Desktop/lyb/agent_benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OPENHANDS_DIR="${OPENHANDS_DIR:-$ROOT_DIR/vendor/openhands-benchmarks}"
 OUTPUT_DIR="${1:-$ROOT_DIR/dumps/openhands_verified_smoke}"
 INSTANCE_ID="${2:-django__django-11333}"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/Users/zsk8888/Desktop/lyb/agent_benchmark"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OPENHANDS_DIR="${OPENHANDS_DIR:-$ROOT_DIR/vendor/openhands-benchmarks}"
 INSTANCE_ID="${1:-django__django-11333}"
 DATASET="${DATASET:-princeton-nlp/SWE-bench_Verified}"
