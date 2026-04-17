@@ -1,0 +1,17 @@
+# Solvability-check oracle. This model is NOT in the solver leaderboard — it's
+# used by validator/solvability_oracle.py to confirm an injected bug is
+# fixable given the repo + problem statement. Unsolvable bugs are dropped.
+
+oracle:
+  model: "claude-opus-4-6"
+  max_turns: 40
+  timeout_s: 1800
+  # Oracle has stronger tooling than leaderboard solvers: full repo read,
+  # git blame access, ability to see the injection patch's metadata (but not
+  # the patch itself).
+  tools:
+    - read_file
+    - list_dir
+    - grep
+    - run_tests
+    - apply_patch

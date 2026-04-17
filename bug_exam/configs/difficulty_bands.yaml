@@ -1,0 +1,33 @@
+# (F, S) difficulty bands. Labels are a priori — Phase 2 calibration will
+# relabel these empirically from observed solver pass rates.
+#
+# F = distinct files modified by the injection patch
+# S = number of validated mutation operators
+
+bands:
+  - id: trivial
+    F: 1
+    S: 1
+    label: "single-file single-op"
+  - id: easy
+    F: 2
+    S: 1
+    label: "two-file single-op"
+  - id: medium
+    F: 2
+    S: 2
+    label: "two-file two-op"
+  - id: hard
+    F: 3
+    S: 2
+    label: "three-file two-op"
+  - id: expert
+    F: 5
+    S: 3
+    label: "five-file three-op"
+
+# Phase 1 smoke uses only trivial + easy
+phase1_bands: [trivial, easy]
+
+# Phase 2 calibration uses all 5
+phase2_bands: [trivial, easy, medium, hard, expert]

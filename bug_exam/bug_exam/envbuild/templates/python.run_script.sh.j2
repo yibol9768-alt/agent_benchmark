@@ -1,0 +1,36 @@
+#!/bin/bash
+# run_script.sh for pytest-based repos.
+# Invoked from inside the container by entryscript.sh.
+# Optional first argument: comma-separated list of test files to run.
+set -uo pipefail
+
+prepare_test_environment() {
+    cd /app
+    # re-run deps install in case the bug/solver patch modified dependencies
+    {{ deps_cmd }} 2>&1 || true
+    {{ install_cmd }} 2>&1 || true
+}
+
+run_all_tests() {
+    cd /app
+    {{ test_cmd }} --junitxml=/workspace/junit.xml
+}
+
+run_selected_tests() {
+    local files="$1"
+    cd /app
+    if [[ -z "$files" ]]; then
+        run_all_tests
+        return
+    fi
+    # Split comma into space
+    local split_files="${files//,/ }"
+    {{ test_cmd }} --junitxml=/workspace/junit.xml $split_files
+}
+
+prepare_test_environment
+if [[ $# -gt 0 && -n "$1" ]]; then
+    run_selected_tests "$1"
+else
+    run_all_tests
+fi

@@ -1,0 +1,31 @@
+FROM {{ base_image }}
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    BE_LANG=python
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+{% for dep in system_deps -%}
+    {{ dep }} \
+{% endfor -%}
+    ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Clone the target repo at a fixed commit (anti-drift)
+RUN git clone {{ repo_url }} /app \
+ && cd /app \
+ && git checkout {{ base_commit }}
+
+# Install project deps. Both install and deps commands are run because some
+# repos keep runtime deps in requirements.txt and build-deps in pyproject.
+RUN cd /app && (pip install --upgrade pip setuptools wheel) \
+ && (cd /app && {{ deps_cmd }}) || true \
+ && (cd /app && {{ install_cmd }}) || true \
+ && (pip install pytest pytest-xdist) \
+ && pip list
+
+ENTRYPOINT ["/bin/bash"]

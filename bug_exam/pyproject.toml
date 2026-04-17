@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bug_exam"
+version = "0.1.0"
+description = "Bug Exam Bench - dynamic repo-level code benchmark with LLM-injected bugs"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.40.0",
+    "click>=8.1",
+    "docker>=7.0",
+    "jinja2>=3.1",
+    "numpy>=1.26",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "rich>=13.7",
+    "scipy>=1.11",
+    "tenacity>=8.2",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pytest-xdist>=3.5", "ruff>=0.4"]
+modal = ["modal>=0.70"]
+
+[project.scripts]
+bug-exam = "bug_exam.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bug_exam*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

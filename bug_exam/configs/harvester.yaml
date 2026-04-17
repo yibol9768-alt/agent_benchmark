@@ -1,0 +1,45 @@
+# GitHub harvester configuration.
+
+quotas:
+  python: 50
+  javascript: 50
+  go: 30
+  java: 30
+  rust: 20
+  ruby: 20
+
+filters:
+  min_stars: 100
+  max_size_kb: 512000     # ~500 MB
+  licenses:
+    - MIT
+    - Apache-2.0
+    - BSD-2-Clause
+    - BSD-3-Clause
+    - ISC
+  created_after: "2025-09-01"     # anti-contamination cutoff
+  min_test_count: 20              # must have at least this many tests at HEAD
+  max_baseline_runtime_s: 900     # baseline test suite must finish within 15 min
+
+oversample_factor: 8              # expect ~12% env-build success rate
+
+github_search_queries:
+  python:
+    - "language:python stars:>=100 pushed:>2025-09-01 license:mit has:tests"
+    - "language:python stars:>=100 created:>2025-09-01 license:apache-2.0"
+  javascript:
+    - "language:javascript stars:>=100 pushed:>2025-09-01 license:mit"
+    - "language:typescript stars:>=100 created:>2025-09-01"
+  go:
+    - "language:go stars:>=100 pushed:>2025-09-01 license:mit"
+  java:
+    - "language:java stars:>=100 pushed:>2025-09-01 license:apache-2.0"
+    - "language:kotlin stars:>=100 pushed:>2025-09-01"
+  rust:
+    - "language:rust stars:>=100 pushed:>2025-09-01 license:mit"
+  ruby:
+    - "language:ruby stars:>=100 pushed:>2025-09-01"
+
+# Phase 1 smoke: 10 python candidates, expect ~5 usable
+phase1_candidate_count: 10
+phase1_target_count: 5

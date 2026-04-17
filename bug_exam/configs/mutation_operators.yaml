@@ -1,0 +1,90 @@
+# 15-op mutation taxonomy. Each operator has:
+#  - description: human-readable
+#  - ast_signature: what counts as an "apply" at a given anchor
+#  - languages: which langs have an impl (Phase 1 = python only)
+#
+# Validator uses the ast_signature to confirm the injector's declared op
+# actually appears at the declared (file, line) anchor in the final patch.
+
+operators:
+  - id: OffByOne
+    description: "Change a numeric literal by ±1 at a loop bound or indexing operation"
+    ast_signature: "num_literal_delta=±1 within Subscript|Slice|Range|For|While|Compare"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: InvertedCondition
+    description: "Negate or invert a boolean test (==, !=, <, <=, >, >=, is, in, not)"
+    ast_signature: "Compare.ops or UnaryOp(Not) flipped"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: SwappedArgs
+    description: "Swap two positional arguments of a function call"
+    ast_signature: "Call.args permuted (size >= 2)"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: RemovedGuard
+    description: "Delete an if-guard or assert/raise that protects a code path"
+    ast_signature: "delete(If | Assert | Raise) node"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: WrongBinaryOperator
+    description: "Replace a BinOp with a sibling (+/-, */÷, &/|, and/or)"
+    ast_signature: "BinOp.op replaced by sibling of same arity"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: DroppedReturn
+    description: "Delete or replace a return statement in a non-void function"
+    ast_signature: "Return replaced by Pass | Return(None) | delete"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: SwitchedConstant
+    description: "Change a non-trivial literal constant (not ±1 off-by-one)"
+    ast_signature: "Constant value changed, excluding OffByOne cases"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: FlippedBoolean
+    description: "Invert a literal True/False/true/false used as a flag or return value"
+    ast_signature: "Constant(bool) flipped"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: WrongExceptionType
+    description: "Change the exception type in raise/throw or except/catch"
+    ast_signature: "Raise.exc.func or ExceptHandler.type identifier changed"
+    languages: [python, javascript, java, ruby]
+
+  - id: MissingAwait
+    description: "Delete an await/async operator from an async call"
+    ast_signature: "delete(Await) or async Call wrapped/unwrapped"
+    languages: [python, javascript, rust]
+
+  - id: WrongLoopBound
+    description: "Change range() / for-bound / while-condition numeric expression"
+    ast_signature: "For.iter or While.test numeric term replaced"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: StateReorder
+    description: "Reorder two adjacent statements that have a dependency"
+    ast_signature: "Stmt list permuted, adjacency distance = 1"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: ShadowedVariable
+    description: "Rename a variable binding to shadow an outer name"
+    ast_signature: "Name.id rewritten at Store, keeping Load sites"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: IncorrectTypeCast
+    description: "Insert or remove a type cast/coercion (int/str/float/list/...)"
+    ast_signature: "Call(func=type_name) inserted/deleted around value"
+    languages: [python, javascript, go, java, rust, ruby]
+
+  - id: OmittedSideEffect
+    description: "Delete a call whose return value isn't used but has an effect"
+    ast_signature: "delete(Expr(Call)) at statement position"
+    languages: [python, javascript, go, java, rust, ruby]
+
+# Phase 1 starts with the first 4 (OffByOne, InvertedCondition, WrongBinaryOperator, SwappedArgs)
+phase1_operators:
+  - OffByOne
+  - InvertedCondition
+  - WrongBinaryOperator
+  - SwappedArgs

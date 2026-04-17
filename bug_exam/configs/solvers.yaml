@@ -1,0 +1,74 @@
+# Solver registry. Each entry maps a solver name to its adapter module.
+# The adapter is a class implementing bug_exam.solvers.base.SolverAdapter.
+#
+# Status legend:
+#   ✅ enabled  — adapter code exists and is active
+#   ⬜ disabled — adapter code exists but needs key/env plumbing
+#   🚧 planned  — no adapter implementation yet (Phase 2+)
+
+solvers:
+  # ✅ Working solvers
+  claude_direct:
+    module: "bug_exam.solvers.claude_direct"
+    class: "ClaudeDirectSolver"
+    provider: "anthropic"
+    model: "glm-5.1"
+    max_turns: 30
+    timeout_s: 1800
+    enabled: true
+
+  openhands:
+    module: "bug_exam.solvers.openhands"
+    class: "OpenHandsSolver"
+    model: "glm-5.1"
+    max_turns: 30
+    timeout_s: 1800
+    enabled: true
+
+  # ⬜ Code exists, disabled pending anthropic key plumbing
+  mini_swe_agent:
+    module: "bug_exam.solvers.mini_swe_agent"
+    class: "MiniSweAgentSolver"
+    model: "claude-opus-4-6"
+    config_path: "../SWE-bench_Pro-os/mini-swe-agent/src/minisweagent/config/default.yaml"
+    timeout_s: 1800
+    enabled: false
+
+  aider:
+    module: "bug_exam.solvers.aider"
+    class: "AiderSolver"
+    model: "claude-opus-4-6"
+    timeout_s: 1800
+    enabled: false
+
+  # 🚧 Planned (Phase 2+) — no adapter implementation yet
+  swe_agent:
+    module: "bug_exam.solvers.swe_agent"
+    class: "SweAgentSolver"
+    model: "claude-opus-4-6"
+    timeout_s: 2400
+    enabled: false
+
+  agentless:
+    module: "bug_exam.solvers.agentless"
+    class: "AgentlessSolver"
+    model: "claude-opus-4-6"
+    timeout_s: 2400
+    enabled: false
+
+  autocoderover:
+    module: "bug_exam.solvers.autocoderover"
+    class: "AutoCodeRoverSolver"
+    model: "claude-opus-4-6"
+    timeout_s: 2400
+    enabled: false
+
+  moatless:
+    module: "bug_exam.solvers.moatless"
+    class: "MoatlessSolver"
+    model: "claude-opus-4-6"
+    timeout_s: 2400
+    enabled: false
+
+# Phase 1 smoke: claude_direct + mini_swe_agent + aider
+phase1_solvers: [claude_direct, mini_swe_agent, aider]

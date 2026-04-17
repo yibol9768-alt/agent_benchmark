@@ -1,0 +1,97 @@
+# Per-language environment + test-framework metadata.
+# Used by envbuild/detector.py and envbuild/templates/ to synthesize Dockerfiles.
+
+python:
+  base_image: "python:3.11-slim-bookworm"
+  system_deps:
+    - git
+    - build-essential
+    - curl
+  test_frameworks:
+    - name: pytest
+      marker_files: ["pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "conftest.py"]
+      install_cmd: "pip install -e . || pip install ."
+      deps_cmd: "pip install -r requirements.txt || pip install -r requirements-dev.txt || pip install -r requirements/dev.txt || true"
+      test_cmd: "python -m pytest --tb=short -q"
+      select_tests_cmd: "python -m pytest --tb=short -q {files}"
+      parser: pytest
+  extensions: [".py"]
+
+javascript:
+  base_image: "node:20-bookworm-slim"
+  system_deps:
+    - git
+    - python3
+    - build-essential
+  test_frameworks:
+    - name: mocha
+      marker_files: [".mocharc.js", ".mocharc.json", ".mocharc.yml"]
+      install_cmd: "npm ci || npm install"
+      test_cmd: "npx mocha --reporter json"
+      parser: mocha
+    - name: jest
+      marker_files: ["jest.config.js", "jest.config.ts", "jest.config.mjs"]
+      install_cmd: "npm ci || npm install"
+      test_cmd: "npx jest --json"
+      parser: jest
+  extensions: [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"]
+
+go:
+  base_image: "golang:1.22-bookworm"
+  system_deps:
+    - git
+    - build-essential
+  test_frameworks:
+    - name: gotest
+      marker_files: ["go.mod"]
+      install_cmd: "go mod download"
+      test_cmd: "go test -json ./..."
+      parser: gotest
+  extensions: [".go"]
+
+java:
+  base_image: "eclipse-temurin:21-jdk-jammy"
+  system_deps:
+    - git
+    - maven
+    - gradle
+  test_frameworks:
+    - name: maven
+      marker_files: ["pom.xml"]
+      install_cmd: "mvn -B -q dependency:resolve"
+      test_cmd: "mvn -B test"
+      parser: junit
+    - name: gradle
+      marker_files: ["build.gradle", "build.gradle.kts", "gradlew"]
+      install_cmd: "./gradlew --no-daemon dependencies || gradle --no-daemon dependencies"
+      test_cmd: "./gradlew --no-daemon test || gradle --no-daemon test"
+      parser: junit
+  extensions: [".java", ".kt"]
+
+rust:
+  base_image: "rust:1.75-bookworm"
+  system_deps:
+    - git
+    - build-essential
+    - pkg-config
+    - libssl-dev
+  test_frameworks:
+    - name: cargo
+      marker_files: ["Cargo.toml"]
+      install_cmd: "cargo fetch"
+      test_cmd: "cargo test -- -Z unstable-options --format json || cargo test --no-fail-fast"
+      parser: cargo
+  extensions: [".rs"]
+
+ruby:
+  base_image: "ruby:3.3-bookworm"
+  system_deps:
+    - git
+    - build-essential
+  test_frameworks:
+    - name: rspec
+      marker_files: [".rspec", "spec/"]
+      install_cmd: "bundle install"
+      test_cmd: "bundle exec rspec --format json"
+      parser: rspec
+  extensions: [".rb"]

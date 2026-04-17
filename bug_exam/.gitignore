@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+build/
+dist/
+
+# secrets
+.env
+
+# output data
+dumps/
+
+# runtime state
+data/repo_cache/
+data/runs/
+data/status.db
+data/status.db-*
+data/dockerfiles/
+data/run_scripts/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
